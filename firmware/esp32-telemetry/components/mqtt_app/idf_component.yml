@@ -1,0 +1,5 @@
+dependencies:
+  # cJSON: relay command payloads ("smarthome/{deviceId}/relay/set") are parsed
+  # with cJSON. IDF v6 no longer ships a built-in json component, so pull the
+  # standard registry component (same parser the IDF examples use).
+  espressif/cjson: "^1.7.19"

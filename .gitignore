@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.opencode/state/
+.env
+.env.*
+!.env.example
+*.tmp
+
+# Firmware ESP-IDF build artifacts
+firmware/esp32-telemetry/sdkconfig
+firmware/esp32-telemetry/sdkconfig.old
+firmware/esp32-telemetry/build/
+firmware/esp32-telemetry/managed_components/
+firmware/esp32-telemetry/dependencies.lock

@@ -1,0 +1,28 @@
+# Dependencies — cài lại trong image (npm ci)
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Secrets — KHÔNG bao giờ vào image (env inject lúc runtime)
+.env
+.env.*
+
+# Build output — emit lại trong stage build
+dist/
+
+# Tài liệu
+*.md
+
+# Firmware ESP-IDF — build ngoài image backend
+firmware/
+
+# OpenCode: loại toàn bộ trừ plugins — Dockerfile COPY .opencode/plugins
+# vì `npm run typecheck` (tsconfig include) cần nó khi build image.
+.opencode/*
+!.opencode/plugins
+
+# OS / editor
+.DS_Store
+Thumbs.db

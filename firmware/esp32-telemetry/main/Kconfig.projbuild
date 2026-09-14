@@ -1,0 +1,131 @@
+menu "SHT3x Telemetry Configuration"
+
+    config SHT3X_I2C_SDA_GPIO
+        int "SHT3x I2C SDA GPIO number"
+        range 0 48
+        default 21
+        help
+            GPIO connected to the SHT3x SDA line (ESP32 classic default 21).
+            External pull-ups (4.7k) are recommended; internal pull-ups are
+            enabled but are weak.
+
+    config SHT3X_I2C_SCL_GPIO
+        int "SHT3x I2C SCL GPIO number"
+        range 0 48
+        default 22
+        help
+            GPIO connected to the SHT3x SCL line (ESP32 classic default 22).
+
+    choice SHT3X_I2C_ADDR
+        prompt "SHT3x I2C device address"
+        default SHT3X_I2C_ADDR_0X44
+        help
+            SHT30/SHT31 address depends on the ADDR pin:
+            low (default) -> 0x44, high -> 0x45.
+        config SHT3X_I2C_ADDR_0X44
+            bool "0x44 (ADDR pin low)"
+        config SHT3X_I2C_ADDR_0X45
+            bool "0x45 (ADDR pin high)"
+    endchoice
+
+    config WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            Mandatory — set it via menuconfig. The application refuses to
+            start when it is empty.
+
+    config WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Password for WPA/WPA2 networks. Leave empty only for open networks.
+
+    config MQTT_BROKER_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.1.100:1883"
+        help
+            Full broker URI, e.g. mqtt://192.168.1.100:1883 (host running
+            Docker with mosquitto port 1883 mapped).
+
+    config MQTT_USER
+        string "MQTT username"
+        default ""
+        help
+            Empty disables username/password authentication.
+
+    config MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config DEVICE_ID
+        string "Device ID"
+        default "esp32-01"
+        help
+            Used in topics smarthome/{deviceId}/... and as MQTT client id.
+
+    config ROOM_ID
+        string "Room ID"
+        default "living-room"
+
+    config SENSOR_FAKE_MODE
+        bool "Use fake (demo) temperature/humidity data"
+        default y
+        help
+            Bật để sinh dữ liệu nhiệt độ/độ ẩm giả thay vì đọc SHT3x
+            (chế độ demo, không cần phần cứng). Fake values are drawn each
+            sampling period in the ranges 24.0-26.0 C and 55.0-65.0 %RH,
+            which stay inside the schema limits (T: -40..125, RH: 0..100).
+
+    config SENSOR_PERIOD_MS
+        int "Sensor sampling period (ms)"
+        range 1000 3600000
+        default 5000
+        help
+            Period of the telemetry sensor task (SHT3x single-shot reads).
+
+    config MQTT_OUTBOX_LIMIT
+        int "MQTT outbox size limit (bytes)"
+        range 1024 1048576
+        default 4096
+        help
+            Caps the esp-mqtt outbox so QoS1 messages buffered while the
+            broker is unreachable cannot grow indefinitely.
+
+endmenu
+
+menu "Relay configuration"
+
+    config RELAY_ACTIVE_HIGH
+        bool "Relays are Active High (HIGH = ON)"
+        default y
+        help
+            Wiring polarity of the relay board. Active High means the coil is
+            energised at a HIGH GPIO level and released at LOW. Disable this
+            for Active Low boards; the firmware then drives the inverse level
+            and still boots with every channel OFF.
+
+    config RELAY_K1_GPIO
+        int "Relay K1 GPIO number"
+        range 0 48
+        default 32
+        help
+            Output GPIO driving relay channel K1 (ESP32 classic default 32).
+
+    config RELAY_K2_GPIO
+        int "Relay K2 GPIO number"
+        range 0 48
+        default 33
+        help
+            Output GPIO driving relay channel K2 (ESP32 classic default 33).
+            Note: G32/G33 are RTC pins, so external pull-downs are recommended
+            to keep the coils released while the chip is held in reset.
+
+    config RELAY_K3_GPIO
+        int "Relay K3 GPIO number"
+        range 0 48
+        default 25
+        help
+            Output GPIO driving relay channel K3 (ESP32 classic default 25).
+
+endmenu

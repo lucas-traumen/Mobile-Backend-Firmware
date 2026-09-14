@@ -1,0 +1,14 @@
+# Partition table for esp32-telemetry, 4 MB flash — OTA layout.
+#
+# Two application slots (ota_0/ota_1) so an OTA image can be written while the
+# running one stays intact; otadata tracks which slot to boot. This only lays
+# out the flash — the OTA download/verify/rollback logic is a separate
+# milestone. Both slots are 1.5 MB, comfortably above the current ~880 KB
+# image, leaving room for the relay/MQTT command layer to grow.
+#
+# Name,   Type, SubType, Offset,  Size,     Flags
+nvs,      data, nvs,     ,         0x4000,
+otadata,  data, ota,     ,         0x2000,
+phy_init, data, phy,     ,         0x1000,
+ota_0,    app,  ota_0,   ,         0x180000,
+ota_1,    app,  ota_1,   ,         0x180000,

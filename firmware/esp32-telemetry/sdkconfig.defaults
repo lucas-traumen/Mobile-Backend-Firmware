@@ -1,0 +1,44 @@
+# Default configuration for esp32-telemetry.
+# Applied on first project generation (when no sdkconfig exists yet).
+# Wi-Fi credentials / broker address should be set via `idf.py menuconfig`
+# — secrets MUST NOT be committed (see PLAN.md).
+
+CONFIG_IDF_TARGET="esp32"
+
+# --- Flash ------------------------------------------------------------
+# Board carries a 4 MB flash; without this the image defaults to 2 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- Partition table (OTA-capable) -----------------------------------
+# Custom layout with two app slots (ota_0/ota_1) + otadata, see partitions.csv.
+# This only lays out the flash; OTA download/rollback logic is not implemented.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- Relay (Active High, OFF at boot) --------------------------------
+CONFIG_RELAY_K1_GPIO=32
+CONFIG_RELAY_K2_GPIO=33
+CONFIG_RELAY_K3_GPIO=25
+CONFIG_RELAY_ACTIVE_HIGH=y
+
+# --- SHT3x I2C sensor -----------------------------------------------
+CONFIG_SHT3X_I2C_SDA_GPIO=21
+CONFIG_SHT3X_I2C_SCL_GPIO=22
+CONFIG_SHT3X_I2C_ADDR_0X44=y
+
+# --- Wi-Fi (empty = must be configured via menuconfig) ---------------
+CONFIG_WIFI_SSID=""
+CONFIG_WIFI_PASSWORD=""
+
+# --- MQTT ------------------------------------------------------------
+CONFIG_MQTT_BROKER_URI="mqtt://192.168.1.100:1883"
+CONFIG_MQTT_USER=""
+CONFIG_MQTT_PASSWORD=""
+
+# --- Device identity --------------------------------------------------
+CONFIG_DEVICE_ID="esp32-01"
+CONFIG_ROOM_ID="living-room"
+
+# --- Telemetry task / client limits -----------------------------------
+CONFIG_SENSOR_PERIOD_MS=5000
+CONFIG_MQTT_OUTBOX_LIMIT=4096

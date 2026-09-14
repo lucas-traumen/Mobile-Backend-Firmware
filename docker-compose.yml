@@ -1,0 +1,83 @@
+# Stack telemetry Smart Home: Mosquitto (MQTT) -> backend (Node.js) -> InfluxDB 2 local.
+# Chạy: cp .env.example .env (điền secret) rồi `docker compose up -d --build`.
+# Các biến ${...} được compose đọc từ file .env ở thư mục này.
+#
+# M11: khôi phục InfluxDB 2.7 local (đảo ngược M8) — user chốt kiến trúc
+# local-only (dễ bảo hành, backup volume). Backend ghi vào `http://influxdb:8086`
+# qua mạng nội bộ compose; app mobile query Flux trực tiếp InfluxDB local.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    restart: unless-stopped
+    ports:
+      - "1883:1883" # ESP32 nối broker qua IP LAN của máy chạy Docker
+      - "9001:9001" # M10: app mobile nối MQTT over WebSocket (cùng auth với 1883)
+    volumes:
+      - mosquitto-data:/mosquitto/data
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./scripts/mosquitto-setup.sh:/usr/local/bin/mosquitto-setup.sh:ro
+    environment:
+      # Secret không nằm trong repo: passwd sinh lúc start từ .env
+      # (xem scripts/mosquitto-setup.sh). MQTT_APP_PASSWORD rỗng → script tự
+      # sinh random và in ra log container (dùng cho user `app` của mobile).
+      MQTT_USER: ${MQTT_USER:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_APP_PASSWORD: ${MQTT_APP_PASSWORD:-}
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "/usr/local/bin/mosquitto-setup.sh && exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf",
+      ]
+    healthcheck:
+      # busybox nc -z: exit 0 khi TCP port mở (đã kiểm chứng trên image 2.0.20)
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  influxdb:
+    image: influxdb:2.7.10
+    restart: unless-stopped
+    ports:
+      - "8086:8086" # query CLI trên host: INFLUX_URL=http://localhost:8086
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      # Image influxdb bắt buộc prefix DOCKER_INFLUXDB_INIT_*; mode setup tạo
+      # org/bucket/admin token ngay lần start đầu. Backend đọc bộ INFLUX_* riêng
+      # trong .env (xem .env.example) — hai bộ trỏ cùng org/bucket/token.
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_INIT_USERNAME:-}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_INIT_PASSWORD:-}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_INIT_ORG:-}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_INIT_BUCKET:-}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_INIT_ADMIN_TOKEN:-}
+    healthcheck:
+      test: ["CMD-SHELL", "influx ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      # .env bắt buộc khi chạy thật; required: false chỉ để `docker compose config`
+      # không lỗi trước khi .env được tạo từ .env.example
+      - path: .env
+        required: false
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+
+volumes:
+  mosquitto-data:
+  influxdb-data:
