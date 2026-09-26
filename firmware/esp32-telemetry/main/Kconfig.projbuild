@@ -32,8 +32,12 @@ menu "SHT3x Telemetry Configuration"
         string "Wi-Fi SSID"
         default ""
         help
-            Mandatory — set it via menuconfig. The application refuses to
-            start when it is empty.
+            Build-time Wi-Fi credentials for the classic flow. With BLE
+            provisioning (M16b) an empty SSID no longer stops the boot:
+            when nothing is stored in NVS either, the board starts BLE
+            provisioning and waits for the mobile app. Leave it empty for
+            app-provisioned boards; set it only to hard-wire Wi-Fi into
+            the image.
 
     config WIFI_PASSWORD
         string "Wi-Fi password"
@@ -45,8 +49,11 @@ menu "SHT3x Telemetry Configuration"
         string "MQTT broker URI"
         default "mqtt://192.168.1.100:1883"
         help
-            Full broker URI, e.g. mqtt://192.168.1.100:1883 (host running
-            Docker with mosquitto port 1883 mapped).
+            Broker URI, e.g. mqtt://192.168.1.100:1883 (host running
+            Docker with mosquitto port 1883 mapped). The scheme is
+            optional: a URI with a scheme is used as-is (esp-mqtt also
+            accepts ws://), a bare host:port is accepted too — the
+            firmware prepends mqtt:// automatically (M19).
 
     config MQTT_USER
         string "MQTT username"
@@ -58,15 +65,52 @@ menu "SHT3x Telemetry Configuration"
         string "MQTT password"
         default ""
 
-    config DEVICE_ID
-        string "Device ID"
-        default "esp32-01"
+    config MQTT_TOPIC_PREFIX
+        string "MQTT topic prefix (contract boards)"
+        default "smarthome"
         help
-            Used in topics smarthome/{deviceId}/... and as MQTT client id.
+            First segment of every board-centric topic firmware v2 publishes:
+            {prefix}/boards/{boardId}/... Must match TOPIC_PREFIX of the
+            backend (.env, default smarthome).
+
+    config DEVICE_ID
+        string "Device ID (= boardId)"
+        default ""
+        help
+            Used as boardId in topics {prefix}/boards/{boardId}/... and as
+            MQTT client id (quy uoc 1:1 deviceId ≡ boardId).
+            Empty (default, M18): the boardId is derived at boot from the
+            hardware — lowercase hex of the LAST 4 bytes of the Wi-Fi STA
+            MAC (e.g. 5c:01:3b:6b:af:6c -> "3b6baf6c"). The MAC is burned
+            into eFuse at the factory, so the id is unique per board and
+            stable across reboots and reflashes without NVS. This is the
+            recommended setting for new boards. Fill in a value only to
+            pin a fixed, self-chosen id for this board.
+
+    config BOARD_TYPE
+        string "Board type"
+        default "IoT_ESP32-S2R3"
+        help
+            Board type code, e.g. "IoT_ESP32-S2R3". Shared by the MQTT board
+            descriptor (boardType field) and the BLE provisioning Device Info
+            characteristic; the frontend shows it as the board title.
+
+    config BOARD_DISPLAY_NAME
+        string "Board display name (optional)"
+        default ""
+        help
+            When non-empty, added as the "displayName" field of the board
+            descriptor ({prefix}/boards/{boardId}/descriptor). Leave empty
+            to omit the field entirely.
 
     config ROOM_ID
-        string "Room ID"
+        string "Room ID (legacy, unused by firmware v2)"
         default "living-room"
+        help
+            Legacy from firmware v1 (tag roomId in the old telemetry).
+            Firmware v2 sends no roomId in any topic or payload; the option
+            is kept so existing sdkconfig files keep loading without
+            "unknown symbol" warnings.
 
     config SENSOR_FAKE_MODE
         bool "Use fake (demo) temperature/humidity data"

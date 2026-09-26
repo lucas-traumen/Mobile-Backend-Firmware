@@ -1,4 +1,4 @@
-idf_component_register(SRCS "mqtt_app.c"
+idf_component_register(SRCS "broker_uri.c" "mqtt_app.c"
                        INCLUDE_DIRS "include"
                        # esp-mqtt comes from the managed component (main/idf_component.yml).
                        # Reference it by its namespaced component name — do NOT add
