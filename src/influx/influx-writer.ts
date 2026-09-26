@@ -1,10 +1,9 @@
 import { Point, type WriteApi } from "@influxdata/influxdb-client"
-import type { TelemetryPayload } from "../telemetry/schema.js"
 
 // Chính sách queue (quyết định trong PLAN.md):
 // - Hàng đợi tối đa MAX_QUEUE_SIZE điểm; đầy → drop điểm cũ nhất + WARN.
 // - Ghi lỗi → retry với backoff nhân đôi, bắt đầu RETRY_INITIAL_DELAY_MS, trần MAX_RETRY_DELAY_MS.
-// - Ghi thành công trở lại (write mới hoặc retry) → xả toàn bộ queue.
+// - Ghi thành công trở lại (point mới hoặc retry) → xả toàn bộ queue.
 // - close(): xả queue best-effort (một lượt, không backoff) rồi dispose writeApi.
 export const MAX_QUEUE_SIZE = 1000
 export const RETRY_INITIAL_DELAY_MS = 500
@@ -21,17 +20,24 @@ export interface TelemetryPointData {
   measurement: "sensors"
   // M11: frontend query Flux trực tiếp InfluxDB local, mong đợi measurement
   // `sensors` + tag `roomId` (mỗi phòng một ESP, deviceId ≡ roomId).
-  tags: { roomId: string }
-  fields: { temperature: number; humidity: number }
+  // M13: thêm tag `boardId` để tab Lịch sử query theo board mà không cần biết
+  // phòng; dữ liệu cũ KHÔNG backfill.
+  // M14/M22: điểm v2 ghi tags {boardId, roomId: boardId} (quy ước 1:1 còn hiệu lực).
+  tags: { roomId: string; boardId: string }
+  // M14a: tổng quát hóa — fields map kênh → field theo descriptor
+  // (src/boards/boards-ingest.ts).
+  fields: Record<string, number>
   timestamp: Date
 }
 
 export function toInfluxPoint(data: TelemetryPointData): Point {
-  return new Point(data.measurement)
+  const point = new Point(data.measurement)
     .tag("roomId", data.tags.roomId)
-    .floatField("temperature", data.fields.temperature)
-    .floatField("humidity", data.fields.humidity)
-    .timestamp(data.timestamp)
+    .tag("boardId", data.tags.boardId)
+  for (const [name, value] of Object.entries(data.fields)) {
+    point.floatField(name, value)
+  }
+  return point.timestamp(data.timestamp)
 }
 
 export class InfluxWriter {
@@ -61,20 +67,16 @@ export class InfluxWriter {
   }
 
   /**
-   * Nhận một payload đã validate và xếp vào hàng ghi.
-   * Không bao giờ throw; timestamp = thời điểm nhận (UTC, Date.now()).
+   * Nhận point đã dựng sẵn (tags/fields/timestamp — map kênh→field theo
+   * descriptor ở src/boards/boards-ingest.ts) và xếp vào hàng ghi.
+   * Không bao giờ throw; cùng chính sách queue/retry/drop-oldest.
    */
-  write(payload: TelemetryPayload, receivedAt: Date = new Date()): void {
+  writePointData(data: TelemetryPointData): void {
     if (this.closed) {
-      console.warn("[influx-writer] write() sau khi close() — bỏ qua")
+      console.warn("[influx-writer] writePointData() sau khi close() — bỏ qua")
       return
     }
-    this.enqueue({
-      measurement: "sensors",
-      tags: { roomId: payload.roomId },
-      fields: { temperature: payload.temperature, humidity: payload.humidity },
-      timestamp: receivedAt,
-    })
+    this.enqueue(data)
     void this.pump()
   }
 

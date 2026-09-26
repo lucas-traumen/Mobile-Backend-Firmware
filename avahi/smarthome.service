@@ -1,0 +1,31 @@
+<?xml version="1.0" standalone='no'?>
+<!--
+  TEMPLATE — KHÔNG sửa trực tiếp trên máy; file gốc nằm trong repo.
+  scripts/server-init.sh sẽ `sudo cp` file này sang
+  /etc/avahi/services/smarthome.service; avahi-daemon tự nhận file service
+  mới trong /etc/avahi/services/ — KHÔNG cần restart daemon.
+
+  Quảng bá mDNS/DNS-SD (M17b) để app mobile dò tìm server trong LAN:
+    _smarthome._tcp port 9001 (MQTT WebSocket — app mobile nối thẳng)
+  Type là contract riêng của app (custom type tránh đụng nhầm broker MQTT
+  thường port 1883 khác cùng trên LAN) — hai bên khớp theo
+  mdnsDiscoveryContract.ts bên repo Mobile_Frontend. TXT keys DÙNG GẠCH
+  DƯỚI đúng contract app:
+    TXT prefix=smarthome       (TOPIC_PREFIX mặc định của contract topic)
+    TXT influx_port=8086       (InfluxDB HTTP — query Flux)
+    TXT influx_org=smarthome
+    TXT influx_bucket=telemetry
+  Secret (MQTT pass, token Influx) KHÔNG đi qua mDNS — app vẫn nhập tay.
+-->
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name>Smart Home Server</name>
+  <service>
+    <type>_smarthome._tcp</type>
+    <port>9001</port>
+    <txt-record>prefix=smarthome</txt-record>
+    <txt-record>influx_port=8086</txt-record>
+    <txt-record>influx_org=smarthome</txt-record>
+    <txt-record>influx_bucket=telemetry</txt-record>
+  </service>
+</service-group>

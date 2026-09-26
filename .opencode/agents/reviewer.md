@@ -1,7 +1,7 @@
 ---
 description: Review code đã làm — chỉ đọc và báo finding, không sửa file, không chạy lệnh
 mode: subagent
-model: nexusmmo/deepseek-v4-flash
+model: nexusmmo/qwen3.8-max
 permission:
   task: "deny"
   edit: "deny"

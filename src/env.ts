@@ -10,12 +10,15 @@ export interface BackendEnv {
   influxToken: string
   influxOrg: string
   influxBucket: string
-  /** Prefix topic contract frontend (`<prefix>/room/{roomId}/...`); default `smarthome`. */
+  /** Prefix topic contract boards (`<prefix>/boards/{boardId}/...`); default `smarthome`. */
   topicPrefix: string
 }
 
-/** Prefix contract frontend khi TOPIC_PREFIX không đặt hoặc để trống. */
+/** Prefix contract boards khi TOPIC_PREFIX không đặt hoặc để trống. */
 export const DEFAULT_TOPIC_PREFIX = "smarthome"
+
+/** boardId hợp lệ: chữ/số/gạch ngang/gạch dưới (an toàn cho segment topic MQTT). */
+export const BOARD_ID_PATTERN = /^[a-zA-Z0-9_-]+$/
 
 export interface InfluxEnv {
   influxUrl: string

@@ -1,7 +1,7 @@
 ---
 description: Chạy test/build/typecheck và báo cáo bằng chứng — không sửa source, chỉ được duyệt lệnh kiểm tra
 mode: subagent
-model: nexusmmo/deepseek-v4-flash
+model: xkiro/z-ai/glm-5.3
 permission:
   task: "deny"
   edit: "deny"

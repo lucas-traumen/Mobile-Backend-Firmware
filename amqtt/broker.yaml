@@ -1,0 +1,41 @@
+# Config amqtt 0.12.x cho broker production — service `amqtt` trong
+# docker-compose.yml mount file này ro vào /app/conf/broker.yaml.
+#
+# Schema config 0.12.x là dataclass: key trong section `plugins` PHẢI snake_case
+# khớp field của `Config` từng plugin (PluginManager hydrate bằng dacite strict,
+# không chuyển kebab-case) — đã đọc source image 0.12.1 để chốt.
+#
+# Listener (port host giữ nguyên như stack cũ, ESP32/app không đổi cổng):
+#   default (TCP 1883)   : ESP32 + backend
+#   ws-mobile (WS 9001)  : app mobile
+# Cấm anonymous: KHÔNG khai AnonymousAuthPlugin — chỉ FileAuthPlugin
+#   (client anonymous → authenticate() trả None → broker CONNACK từ chối).
+# Persistence: amqtt.contrib.persistence.SessionDBPlugin (sqlite qua restart).
+listeners:
+  # "default" là listener bắt buộc của schema (BrokerConfig.__post_init__ đọc
+  # listeners["default"]); các listener khác kế thừa trường không đặt riêng.
+  default:
+    type: tcp
+    bind: 0.0.0.0:1883
+  ws-mobile:
+    type: ws
+    bind: 0.0.0.0:9001
+
+plugins:
+  # Log connect/disconnect. Value rỗng = dùng default config.
+  amqtt.plugins.logging_amqtt.EventLoggerPlugin:
+
+  # Auth bắt buộc — file `username:hash` mỗi dòng, hash argon2id (sha512-crypt
+  # đã deprecated từ 0.12, Python 3.13 bỏ `crypt`). File sinh lúc start bởi
+  # scripts/amqtt-setup.sh vào /app/data (volume, sống qua restart).
+  amqtt.plugins.authentication.FileAuthPlugin:
+    password_file: /app/data/passwd
+
+  # Lưu session + retained vào sqlite — sống qua restart container.
+  # connection: 4 dấu "/" (sqlite+aiosqlite:/// + /app/data/amqtt.db tuyệt đối).
+  # clear_on_shutdown=false: retained phải sống qua restart — kể cả khi broker
+  # bị tắt đột ngột (SIGKILL khi vượt stop_grace_period) thì dữ liệu cũng
+  # không bị xoá.
+  amqtt.contrib.persistence.SessionDBPlugin:
+    connection: sqlite+aiosqlite:////app/data/amqtt.db
+    clear_on_shutdown: false

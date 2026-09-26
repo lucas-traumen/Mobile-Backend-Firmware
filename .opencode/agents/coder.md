@@ -1,7 +1,7 @@
 ---
 description: Sửa code trong phạm vi được giao — chỉ đụng file được liệt kê trong prompt
 mode: subagent
-model: nexusmmo/deepseek-v4-flash
+model: xkiro/z-ai/glm-5.3-flash
 permission:
   task: "deny"
   edit: "allow"

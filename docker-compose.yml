@@ -1,42 +1,72 @@
-# Stack telemetry Smart Home: Mosquitto (MQTT) -> backend (Node.js) -> InfluxDB 2 local.
+# Stack telemetry Smart Home: amqtt (MQTT) -> backend (Node.js) -> InfluxDB 2 local.
 # Chạy: cp .env.example .env (điền secret) rồi `docker compose up -d --build`.
 # Các biến ${...} được compose đọc từ file .env ở thư mục này.
 #
 # M11: khôi phục InfluxDB 2.7 local (đảo ngược M8) — user chốt kiến trúc
 # local-only (dễ bảo hành, backup volume). Backend ghi vào `http://influxdb:8086`
 # qua mạng nội bộ compose; app mobile query Flux trực tiếp InfluxDB local.
+#
+# M21b: broker là amqtt 0.12.1 (Python asyncio, MQTT 3.1.1) — build mỏng từ image
+# chính thức `amqtt/amqtt:0.12.1` + deps persistence (amqtt/Dockerfile), config
+# amqtt/broker.yaml. Port giữ nguyên 1883 (TCP) + 9001 (WebSocket).
 
 services:
-  mosquitto:
-    image: eclipse-mosquitto:2.0.20
+  amqtt:
+    build:
+      context: ./amqtt
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "1883:1883" # ESP32 nối broker qua IP LAN của máy chạy Docker
       - "9001:9001" # M10: app mobile nối MQTT over WebSocket (cùng auth với 1883)
     volumes:
-      - mosquitto-data:/mosquitto/data
-      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./scripts/mosquitto-setup.sh:/usr/local/bin/mosquitto-setup.sh:ro
+      - amqtt-data:/app/data
+      - ./amqtt/broker.yaml:/app/conf/broker.yaml:ro
+      # Sinh passwd lúc start từ env — mount ro.
+      - ./scripts/amqtt-setup.sh:/usr/local/bin/amqtt-setup.sh:ro
+      - ./scripts/amqtt-passwd.py:/usr/local/bin/amqtt-passwd.py:ro
     environment:
       # Secret không nằm trong repo: passwd sinh lúc start từ .env
-      # (xem scripts/mosquitto-setup.sh). MQTT_APP_PASSWORD rỗng → script tự
+      # (xem scripts/amqtt-setup.sh). MQTT_APP_PASSWORD rỗng → script tự
       # sinh random và in ra log container (dùng cho user `app` của mobile).
       MQTT_USER: ${MQTT_USER:-}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_APP_USER: ${MQTT_APP_USER:-app}
       MQTT_APP_PASSWORD: ${MQTT_APP_PASSWORD:-}
-    entrypoint:
-      [
-        "/bin/sh",
-        "-c",
-        "/usr/local/bin/mosquitto-setup.sh && exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf",
-      ]
+      PASSWD_FILE: /app/data/passwd
+      PASSWD_HELPER: /usr/local/bin/amqtt-passwd.py
+    # Sinh passwd từ env rồi exec broker — `exec` để amqtt trở thành PID 1.
+    command: ["/bin/sh", "-c", "/usr/local/bin/amqtt-setup.sh && exec amqtt -c /app/conf/broker.yaml"]
+    # Signal: amqtt 0.12 chỉ graceful-shutdown (SessionDB flush + đóng sạch
+    # session) trên SIGINT — `except KeyboardInterrupt` trong broker CLI.
+    # docker stop mặc định gửi SIGTERM mà amqtt không xử lý → SIGKILL sau
+    # 10s. stop_signal: SIGINT để docker stop/restart/down gửi thẳng đúng
+    # signal amqtt cần.
+    # KHÔNG dùng wrapper `amqtt ... &` + trap TERM→INT: dash với async list
+    # (`&`) luôn set SIGINT/SIGQUIT = SIG_IGN cho process con (POSIX), và
+    # Python tôn trọng SIG_IGN kế thừa — không cài handler KeyboardInterrupt
+    # → broker không bao giờ tắt sạch (đã kiểm chứng: /proc/<pid>/status
+    # SigIgn có bit SIGINT, `kill -INT` vô hiệu). Foreground + exec giữ
+    # SIGINT ở default → Python cài handler bình thường.
+    stop_signal: SIGINT
+    stop_grace_period: 15s
     healthcheck:
-      # busybox nc -z: exit 0 khi TCP port mở (đã kiểm chứng trên image 2.0.20)
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883"]
+      # Image amqtt là python base, không có `nc`. Kiểm tra bằng python socket
+      # gửi 1 packet MQTT CONNECT + DISCONNECT (không kèm credentials) tới
+      # 127.0.0.1:1883 rồi chờ CONNACK (byte đầu 0x20 = 32): broker phải trả
+      # lời trong 3s, không thì healthcheck fail. Không dùng raw socket
+      # mở-rồi-đóng: broker log ERROR "No data..." mỗi lần như vậy; đóng ngay
+      # sau sendall (không recv) còn gây traceback "Socket not connected" —
+      # cả hai đều spam log mỗi 10s. Cách này log sạch ở mức INFO và xác nhận
+      # luôn tầng MQTT, không chỉ TCP.
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import socket;s=socket.create_connection(('127.0.0.1',1883),3);s.sendall(b'\x10\x0e\x00\x04MQTT\x04\x02\x00<\x00\x02hc\xe0\x00');s.settimeout(3);assert s.recv(4)[0]==32"
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 5s
+      start_period: 10s
 
   influxdb:
     image: influxdb:2.7.10
@@ -73,11 +103,11 @@ services:
       - path: .env
         required: false
     depends_on:
-      mosquitto:
+      amqtt:
         condition: service_healthy
       influxdb:
         condition: service_healthy
 
 volumes:
-  mosquitto-data:
+  amqtt-data:
   influxdb-data:

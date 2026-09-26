@@ -48,7 +48,7 @@ LAN_IP="${LAN_IP:-127.0.0.1}"
 TOPIC_PREFIX="${TOPIC_PREFIX:-smarthome}"
 INFLUX_ORG_VAL="${INFLUX_ORG:-smarthome}"
 APP_USER="${MQTT_APP_USER:-app}"
-APP_PASSWORD="${MQTT_APP_PASSWORD:-<chưa đặt — xem .env, hoặc docker compose logs mosquitto>}"
+APP_PASSWORD="${MQTT_APP_PASSWORD:-<chưa đặt — xem .env, hoặc docker compose logs amqtt>}"
 READ_TOKEN="${INFLUX_APP_TOKEN:-}"
 
 if [[ -z "$READ_TOKEN" ]]; then

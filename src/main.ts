@@ -1,22 +1,18 @@
-// Composition root: env → InfluxDB WriteApi → InfluxWriter → MqttService.
+// Composition root: env → InfluxDB WriteApi → InfluxWriter → MqttService
+// (+ descriptor registry + ingest telemetry v2 trên cùng connection mqtt-service).
 // Chạy: host `npm run start` (tsx) hoặc container `node dist/src/main.js`.
 import { InfluxDB } from "@influxdata/influxdb-client"
 
-import { BridgeService } from "./bridge/bridge-service.js"
+import { BoardsTelemetryIngest } from "./boards/boards-ingest.js"
+import { DescriptorRegistry } from "./boards/descriptor-registry.js"
 import { InfluxWriter } from "./influx/influx-writer.js"
 import { MqttService } from "./mqtt/mqtt-service.js"
-import { loadBackendEnv, optionalEnv } from "./env.js"
+import { loadBackendEnv } from "./env.js"
 
 // writeApi của client bị tắt retry nội bộ (maxRetries: 0) và auto-flush
 // (flushInterval: 0): việc retry/backoff + queue giới hạn do InfluxWriter
 // quản để đúng chính sách trong PLAN.md (backoff ≤ 30s, queue 1000, drop oldest).
 const WRITE_OPTIONS = { flushInterval: 0, maxRetries: 0 } as const
-
-// Bridge log mỗi hướng publish ở mức DEBUG; bật bằng LOG_LEVEL=debug (hoặc trace).
-function isDebugLogLevel(): boolean {
-  const level = optionalEnv("LOG_LEVEL")?.toLowerCase()
-  return level === "debug" || level === "trace" || level === "verbose"
-}
 
 let shuttingDown = false
 
@@ -28,20 +24,22 @@ function main(): void {
     influx.getWriteApi(env.influxOrg, env.influxBucket, "ms", WRITE_OPTIONS),
   )
 
+  // Descriptor registry + ingest telemetry v2 chạy trên CÙNG connection của
+  // MqttService (extraRoutes — backend chỉ có một MQTT connection). Retained
+  // descriptor tự nạp ngay sau subscribe và bắn lại sau mỗi lần resubscribe
+  // khi reconnect.
+  const descriptorRegistry = new DescriptorRegistry({ prefix: env.topicPrefix })
+  const boardsIngest = new BoardsTelemetryIngest({
+    prefix: env.topicPrefix,
+    registry: descriptorRegistry,
+    onPoint: (point) => writer.writePointData(point),
+  })
+
   const mqttService = new MqttService({
     url: env.mqttUrl,
     username: env.mqttUser,
     password: env.mqttPassword,
-    sink: writer,
-  })
-
-  // Bridge contract firmware ↔ frontend (MQTT connection riêng, xem src/bridge/).
-  const bridgeService = new BridgeService({
-    url: env.mqttUrl,
-    username: env.mqttUser,
-    password: env.mqttPassword,
-    topicPrefix: env.topicPrefix,
-    debug: isDebugLogLevel(),
+    extraRoutes: [descriptorRegistry, boardsIngest],
   })
 
   const shutdown = (signal: string): void => {
@@ -53,7 +51,6 @@ function main(): void {
     void (async () => {
       try {
         await writer.close()
-        await bridgeService.stop()
         await mqttService.stop()
         console.log("[main] shutdown xong")
         process.exit(0)
@@ -69,7 +66,6 @@ function main(): void {
   process.on("SIGTERM", () => shutdown("SIGTERM"))
 
   void mqttService.start()
-  void bridgeService.start()
 }
 
 main()
