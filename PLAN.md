@@ -12,6 +12,7 @@
 - **2026-09-19 chiều**: M17 ĐÓNG (coder + integration PASS — quảng bá mDNS live, 3 container healthy, MQTT round-trip qua IP mDNS). User "ok" duyệt M16 → dispatch cả 3 phần a/b/c cùng ngày, tất cả DONE + orchestrator verified: M16a component ble_prov (build xanh 0 warning, 9 UUID, credentials byte-identical), M16b wiring 3 chế độ boot (BLE link thật 1.074 MB/28% free, fix GCC dead-strip nhánh BLE bằng noinline), M16c README mục 10 + harness 130/130. **Còn: on-target test (user, cần frontend amend broker chars) + chuyển tiếp board 0 (gộp M14c)**.
 - **2026-09-21 (log on-target M16/M18 user dán)**: BLE provisioning chạy đúng tới WiFi (ssid UTF-8 "Phòng toàn trai đẹp" OK, IP 192.168.2.17, advertise `IoTBoard-3b6baf6c` = M18 boardId-from-MAC hoạt động, fail-soft M16d đúng: `FAILED:ERROR` → chờ giá trị sửa, không reboot). Lỗi duy nhất: `mqtt_app_init` fail `Error parse uri = 192.168.2.28:1883` — **broker app gửi thiếu scheme `mqtt://`** (esp-mqtt yêu cầu scheme). Máy server đang là 192.168.2.28 (wlp4s0), mosquitto healthy listen 0.0.0.0:1883 → địa chỉ ĐÚNG, chỉ thiếu scheme. Plan **M19** (firmware normalize broker URI) đã soạn — **CHỜ USER DUYỆT**.
 - **2026-09-26**: M23 DONE + orchestrator verified (`run_id` `65d543ab-fd30-4f5a-a22a-86ef3f93afac`, session coder `ses_f2666d498ffe6mUpuOiihxzilK`). `idf.py build` do orchestrator chạy lại: exit 0, binary `0x1145d0`, 28% free. Chưa flash board `3b6baf6c`.
+- **2026-09-26**: M24 DONE — user đã duyệt triển khai; `M24:coder` DONE theo run `4f9d6c2e-7b19-4d8a-93e1-c5a0b6f4d812`, review APPROVE, orchestrator tự xác minh syntax/harness/compose gate sau hardening.
 
 ## Trạng thái
 
@@ -628,6 +629,79 @@ User 2026-09-25: "sai cơ chế rồi nếu đã lưu nvs nếu check không có
 | M22:coder | NVS path: check Wi-Fi 15 s (fail-fast 200/201) + MQTT 10 s; fail → erase `bleprov` + restart vào BLE | `firmware/esp32-telemetry/main/main.c`, `firmware/esp32-telemetry/components/wifi_conn/wifi_conn.c` (+ header nếu cần cờ fail-fast), README mục 10 (một đoạn thay "BLE không bật lại khi credential sai") | build 0 warning mới; không còn "keep retrying in the background" trên nhánh NVS; Kconfig path không đổi; erase chỉ khi load NVS thành công | `. ~/.espressif/tools/activate_idf_v6.0.1.sh && cd firmware/esp32-telemetry && idf.py build` |
 
 Sau coder: orchestrator tự chạy lại `idf.py build`. Reviewer/tester không dispatch mặc định (một nhánh boot, user flash xác nhận). User flash + bỏ BOOT; kỳ vọng log: `stale NVS — erased` rồi reboot, sau đó `BLE provisioning mode` / `IoTBoard-3b6baf6c`. App đẩy SSID + `mqtt://192.168.100.3:1883`.
+
+### M24 (DONE 2026-09-26) — Menu bootstrap/vận hành cho server mới tinh
+
+#### Mục tiêu và phạm vi
+
+Thiết bị server mới có thể bắt đầu từ số 0: sau khi người vận hành đã flash OS, bật SSH, cài Docker Engine + Compose v2, git, avahi-daemon và qrencode, họ clone repo rồi chạy **một entrypoint duy nhất** thay vì nhớ chuỗi lệnh rời rạc. M24 chỉ thêm lớp điều phối host; không đổi contract MQTT, firmware, backend TypeScript hay schema InfluxDB.
+
+**Ranh giới quan trọng:** `scripts/smarthome.sh` nằm trong repo nên không thể chạy trước khi repo được clone. Bootstrap "trước khi có code" là lớp cài đặt của OS, không phải logic trong container:
+
+1. Flash OS + bật SSH và có mạng.
+2. Trên host mới, dùng package manager/installer của distro để cài `git`, Docker Engine + Compose v2, `openssl`, `avahi-daemon`, `avahi-utils` và `qrencode` (không chạy Docker để cài chính Docker; không cần repo cho bước này).
+3. Dùng `git clone`/SSH key hoặc HTTPS token để lấy repo, rồi `git checkout` tag/commit đã chọn.
+4. Từ thư mục repo mới chạy `scripts/smarthome.sh init`; lúc này mới có `.env.example`, Compose file và các script wrapper. `.env` được sinh từ repo, sau đó Docker mới pull/build image rồi start stack.
+
+Git và Docker vì vậy đều được cài trên host nhưng có vai trò khác nhau: Git lấy đúng source/config; Docker chạy build/runtime. Không thể `docker compose pull` hoặc `docker compose build` backend trước khi có `docker-compose.yml`/`Dockerfile` từ repo. Nếu yêu cầu một lệnh duy nhất ngay sau khi flash OS, cần thêm một artifact ngoài repo (cloud-init, image provisioning, Ansible hoặc installer được host độc lập) để cài dependency và clone revision; đó là phạm vi bootstrap riêng, không phải `smarthome.sh` trong M24.
+
+File logic mới duy nhất trong phần triển khai là `scripts/smarthome.sh`; đồng thời phải cập nhật `README.md` để người vận hành biết cách đi từ OS trắng đến stack chạy và cách dùng menu. Script phải gọi lại logic đã có, không chép lại nội dung của:
+
+- `scripts/server-init.sh` — avahi + validate Compose + compose up + đợi service sẵn sàng + verify mDNS;
+- `scripts/credentials-qr.sh` — QR credentials cho app;
+- `scripts/board-qr.sh` — QR board, có thể truyền `--board-id` hoặc `-m MAC`;
+- `scripts/pairing-code.sh` — khối mã ghép nối.
+
+`server-init.sh` vẫn là nguồn sự thật cho phần khởi động stack và health wait. `smarthome.sh` không tự cài package hệ điều hành, không tự ghi `/etc`, không in secret ngoài các lệnh QR vốn đã có chủ đích in secret.
+
+#### Hành vi bắt buộc
+
+1. **Tự tìm repo root và chạy ở đó** để script hoạt động dù người vận hành gọi từ thư mục khác. Dùng Bash strict mode; kiểm tra các script phụ trợ tồn tại trước khi dispatch.
+2. **Sinh `.env` an toàn khi init lần đầu:**
+   - Nếu `.env` đã tồn tại thì không ghi đè và không sinh lại secret.
+   - Nếu thiếu, tạo từ `.env.example` bằng file tạm rồi rename atomic; đặt permission `600`.
+   - Dùng `openssl rand -hex` để thay các placeholder secret trong bản mẫu bằng giá trị random: `MQTT_PASSWORD`, `MQTT_APP_PASSWORD`, `INFLUXDB_INIT_PASSWORD` và một token admin dùng đồng nhất cho `INFLUXDB_INIT_ADMIN_TOKEN` + `INFLUX_TOKEN`. Giữ nguyên các giá trị không-secret (`MQTT_USER`, org, bucket, URL service name, prefix).
+   - Không ghi secret vào log, argv, file tạm còn sót hoặc output của menu. Không tự sinh `INFLUX_APP_TOKEN` read-only vì token đó cần policy/quyền riêng; QR credentials vẫn xử lý trường này theo script hiện tại.
+   - Nếu thiếu `openssl`, `.env.example` hoặc không thể tạo `.env`, dừng với thông báo cài/khắc phục rõ ràng; không gọi `server-init.sh` với cấu hình nửa vời.
+3. **Tải/build trước, khởi động sau:** sau khi `.env` có mặt, validate `docker compose config --quiet`, tải image-only services và build các service có Dockerfile ở trạng thái chưa chạy (`docker compose pull --ignore-buildable` + `docker compose build --pull`, hoặc cách tương đương tương thích với Compose v2 đang yêu cầu). Nếu pull/build/verify lỗi thì dừng; chỉ khi bước này thành công mới gọi `bash scripts/server-init.sh`. Lần gọi `server-init.sh` có thể dùng cache đã build; không được chạy stack trước bước preload/verify.
+4. **Menu không đối số:**
+   ```text
+   1) Init server mới
+   2) QR credentials
+   3) QR board
+   4) Khối mã ghép nối
+   5) Trạng thái
+   0) Thoát
+   ```
+   Input sai phải báo lỗi và quay lại menu, không thoát đột ngột. EOF/Ctrl-C phải kết thúc sạch.
+5. **Gọi trực tiếp có đối số:** hỗ trợ tên lệnh dễ nhớ và alias số tương ứng (`init`/`1`, `credentials-qr`/`2`, `board-qr`/`3`, `pairing-code`/`4`, `status`/`5`, `0`/`exit`). Tham số sau `board-qr` phải được truyền nguyên vẹn tới `board-qr.sh`, ví dụ `bash scripts/smarthome.sh board-qr --board-id 3b6baf6c` hoặc `bash scripts/smarthome.sh 3 -m 5c:01:3b:6b:af:6c`; không dùng `eval`.
+6. **QR board trong menu:** vì server nhúng không có ESP-IDF/esptool, option 3 phải hỏi `boardId` hoặc MAC bằng `read` rồi gọi `board-qr.sh --board-id ...` / `board-qr.sh -m ...`; không mặc định cố đọc serial. Chế độ đối số vẫn cho phép truyền mọi option hợp lệ của `board-qr.sh`.
+7. **Trạng thái:** chạy từ repo root `docker compose ps` và, nếu có `avahi-browse`, `avahi-browse -rt _smarthome._tcp` có timeout; thiếu tool hoặc stack chưa chạy chỉ in cảnh báo trạng thái, không làm menu crash. Không đọc/in `.env`.
+8. **Preflight và lỗi:** kiểm tra tối thiểu Bash, Docker Compose v2 cho các lệnh cần thiết và `openssl` khi phải sinh `.env`; thông báo rõ lệnh cài đặt còn thiếu (`docker`, `docker compose`, `avahi-daemon`, `avahi-utils`, `qrencode`) nhưng không tự chạy `apt`/`sudo apt`. Các script QR được phép tự xử lý trường hợp thiếu `qrencode` theo hành vi hiện có.
+
+#### README bắt buộc phải mô tả toàn bộ vòng đời vận hành
+
+Thêm một mục rõ ràng, có thể làm theo tuần tự, ví dụ `Khởi động server mới từ số 0`, bao gồm:
+
+- tiền điều kiện OS/network/SSH và cài `git`, Docker Engine + Compose v2, `openssl`, `avahi-daemon`, `avahi-utils`, `qrencode` trên host; nhấn mạnh Docker phải được cài trước khi dùng Compose và không cần image/repo để cài Docker;
+- clone repo bằng HTTPS hoặc SSH, checkout tag/commit/version cụ thể, rồi chuyển vào thư mục repo;
+- lệnh chạy lần đầu `bash scripts/smarthome.sh init`, giải thích `.env` sinh từ `.env.example`, secret random, `.env` không commit;
+- menu option 1–5/0 và các command mode tương ứng; ví dụ QR board bằng `--board-id` hoặc `-m MAC` trên thiết bị không có ESP-IDF;
+- thứ tự init `config → pull/build → server-init → healthy`, cách kiểm tra `docker compose ps`, `avahi-browse`, và QR/pairing sau khi stack sẵn sàng;
+- hành vi reboot (`restart: unless-stopped`), cập nhật version an toàn (pull/checkout rồi init/build lại), xử lý lỗi thường gặp và nguyên tắc không dán secret vào log/chat/commit;
+- ranh giới: `smarthome.sh` chỉ chạy sau clone; nếu muốn bootstrap một lệnh từ OS trắng thì cần cloud-init/Ansible/installer ngoài repo, không giả vờ rằng script trong repo làm được việc đó.
+
+#### Không đưa backup/restore vào M24
+
+M24 giữ menu nhỏ và an toàn, **chưa thêm backup/restore volume InfluxDB**. Restore là thao tác phá hủy cần contract riêng (đường dẫn archive, xác nhận hai bước, dừng stack, backup hiện trạng trước khi ghi đè, kiểm tra ownership và verify dữ liệu sau restore). Đề xuất tách thành M25; nếu user muốn có ngay thì chỉnh plan trước khi duyệt/dispatch.
+
+| task_key | Việc | File chính | Tiêu chí đạt | Lệnh kiểm tra |
+|---|---|---|---|---|
+| M24:coder | Tạo `scripts/smarthome.sh`: menu + command dispatch, sinh `.env` lần đầu với secret random an toàn, preload pull/build không chạy stack, wrapper cho server-init/QR/pairing/status, prompt QR board bằng MAC/id; cập nhật README hướng dẫn bootstrap OS trắng → clone → init → vận hành | `scripts/smarthome.sh` (mới), `README.md` | `bash -n` sạch; không ghi đè `.env` đã có; `.env` mới permission 600 và các secret cần thiết không còn placeholder; không lộ secret trong log/argv; init chỉ gọi `server-init.sh` sau pull/build/config thành công; menu/direct aliases + pass-through board args hoạt động; README có quy trình từ server chưa có repo/Docker đến reboot, menu, QR, status và troubleshooting; không sửa logic các script hiện có | `bash -n scripts/smarthome.sh`; test cô lập với `PATH`/fake command hoặc harness không chạm Docker thật; `docker compose config --quiet`; đọc diff + kiểm tra secret/permission; kiểm tra README đối chiếu checklist; sau coder orchestrator chạy lại toàn bộ kiểm tra |
+
+Thứ tự M24: sau khi user duyệt, dispatch **một** `M24:coder`; coder xong mới cân nhắc reviewer/tester. Vì đây là host shell/orchestration có rủi ro về secret và process execution, reviewer đọc diff là nên có; tester có thể chạy harness kiểm tra menu/init bằng fake commands, không cần khởi động stack thật. Orchestrator phải tự xác minh lại mọi lệnh trước khi ghi M24 DONE.
+
+**M24 hoàn tất (2026-09-26):** `scripts/smarthome.sh` mới + README section bootstrap/vận hành; coder xử lý hardening helper `server-init.sh`, cảnh báo Docker daemon, cleanup SIGTERM và câu README về dependency. Reviewer APPROVE. Tester bị giới hạn quyền shell nên không tự chạy lệnh, nhưng orchestrator đã chạy lại độc lập: `bash -n` PASS, harness fake-PATH **88/88 PASS**, `docker compose config --quiet` PASS, `git diff --check` PASS. Không chạy stack thật/không đụng volume; `.env` thật nguyên vẹn. Các thay đổi source M24 chưa commit theo quy định — chờ user yêu cầu commit nếu cần.
 
 ## Kiểm thử
 

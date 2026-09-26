@@ -94,6 +94,8 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ## 6. Chạy server (Docker Compose)
 
+> Server mới cài từ OS trắng? Nhảy thẳng tới mục con **[Khởi động server mới từ số 0 (`smarthome.sh`)](#khởi-động-server-mới-từ-số-0-smarthomesh)** ở cuối mục 6 — một entrypoint gộp tất cả các bước dưới đây.
+
 ```bash
 cp .env.example .env
 # điền giá trị thật vào .env:
@@ -149,6 +151,106 @@ Script lần lượt:
 > - **ufw bật** → mở 3 port: `sudo ufw allow 1883/tcp`, `sudo ufw allow 9001/tcp`, `sudo ufw allow 8086/tcp`.
 
 > Secret (MQTT pass, token Influx) **không** đi qua mDNS — TXT record chỉ chứa prefix + thông số Influx (port/org/bucket), không secret; app vẫn nhập trong màn hình ghép nối (mục 14.3/14.4).
+
+### Khởi động server mới từ số 0 (`smarthome.sh`)
+
+Runbook một trạm cho server mới: OS trắng → cài tool host → clone repo → `init` → kiểm tra → reboot/update. `scripts/smarthome.sh` là entrypoint trên host, chạy SAU khi repo đã clone (script nằm trong repo nên không thể tồn tại trước khi clone); `init` tự bọc đúng chuỗi thủ công + `server-init.sh` hai mục phía trên. Script **không tự cài package** — thiếu gì chỉ in cách cài.
+
+**Bước 1 — cài tool trên host.** Docker Engine + Compose v2 và Git cài trực tiếp trên host — **Docker không dùng để cài Docker**. Compose v2 phải là plugin `docker compose` đi kèm Docker Engine mới; `apt install docker`/`docker.io` kiểu distro cũ **không** đảm bảo có Compose v2 — cài Engine + plugin theo hướng dẫn chính thức Docker. Lệnh mẫu Ubuntu/Debian (đối chiếu lại với docs.docker.com theo bản distro của bạn):
+
+```bash
+# Docker Engine + Compose v2 (repo chính thức của Docker):
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker "$USER"   # đăng xuất/đăng nhập lại để chạy docker không cần sudo
+
+# Các gói host còn lại cho init/mDNS/QR:
+sudo apt-get install -y openssl python3 avahi-daemon avahi-utils qrencode
+```
+
+(Thiếu `docker compose`, `openssl` hoặc `python3` thì `init` **dừng** ngay ở bước tương ứng và in đúng lệnh cài cần chạy. Thiếu `avahi-daemon`/`avahi-utils`/`qrencode` thì `server-init`/`status`/các wrapper QR chỉ WARN hoặc tự báo lỗi theo script của chúng — ví dụ thiếu `qrencode` chỉ mất phần QR, JSON vẫn in.)
+
+**Bước 2 — clone + checkout bản muốn chạy:**
+
+```bash
+git clone <URL_REPO> Mobile_Backend
+cd Mobile_Backend
+git checkout <TAG_HOẶC_COMMIT>   # pin đúng bản phát hành, không chạy tay từ nhánh dev
+```
+
+**Bước 3 — init.** `bash scripts/smarthome.sh init` (hoặc mở menu, chọn 1). Chuỗi bên trong, fail bước nào dừng tại đó và không gọi server-init:
+
+1. `.env` **đã có** → giữ nguyên, không ghi đè, không sinh lại secret. **Chưa có** → tạo từ `.env.example` qua temp file cùng thư mục + atomic `mv`, `chmod 600` từ trước khi ghi secret: `MQTT_PASSWORD`, `MQTT_APP_PASSWORD`, `INFLUXDB_INIT_PASSWORD` random bằng `openssl rand -hex`; một token random dùng chung cho `INFLUXDB_INIT_ADMIN_TOKEN` và `INFLUX_TOKEN` (hai biến này bắt buộc đồng nhất — xem `.env.example`). Secret không nằm trong argv/log; script xác nhận không còn placeholder nào trước khi nhận file. `INFLUX_APP_TOKEN` (token read-only cho app) **không** tự sinh — tạo tay rồi thêm vào `.env` sau (mục 14.4).
+2. `docker compose config --quiet` — validate compose + `.env` trước mọi thao tác image.
+3. Preload, **chưa `up`**: `docker compose pull --ignore-buildable` (Compose cũ không có flag này → pull từng service dùng image có sẵn, vd `influxdb`) rồi `docker compose build --pull`.
+4. Gọi `scripts/server-init.sh` — avahi + `docker compose up -d --build` + đợi amqtt/influxdb healthy + verify quảng bá `_smarthome._tcp` (chi tiết 8 bước ở mục `Khởi tạo server (mDNS discovery)` phía trên).
+
+**Bước 4 — dùng menu / direct mode.** Chạy `bash scripts/smarthome.sh` không đối số:
+
+| Chọn | Tác vụ |
+|---|---|
+| `1` / `init` | Init server mới (chuỗi 4 bước trên) |
+| `2` / `credentials-qr` | QR credentials cho app mobile (chứa secret) |
+| `3` / `board-qr` | Nhãn QR board — hỏi boardId hoặc MAC |
+| `4` / `pairing-code` | Khối mã ghép nối |
+| `5` / `status` | `docker compose ps` + quét mDNS `_smarthome._tcp` |
+| `0` / `exit` | Thoát |
+
+Chọn sai/Enter trống quay lại menu; EOF/Ctrl-C thoát sạch. Direct mode cho script/lệnh một lần:
+
+```bash
+bash scripts/smarthome.sh init
+bash scripts/smarthome.sh credentials-qr
+bash scripts/smarthome.sh pairing-code
+bash scripts/smarthome.sh status
+```
+
+**Bước 5 — nhãn QR board ngay trên server (không cần ESP-IDF/esptool).** Server thường không có môi trường ESP-IDF nên `board-qr` qua menu hỏi nhập thẳng `boardId` (vd `3b6baf6c`) hoặc MAC Wi-Fi STA (vd `5c:01:3b:6b:af:6c` — lấy từ log boot firmware, dòng `Wi-Fi STA MAC`), **không dò serial**. Truyền thẳng cũng được, args đi nguyên vẹn tới `board-qr.sh`:
+
+```bash
+bash scripts/smarthome.sh board-qr --board-id 3b6baf6c
+bash scripts/smarthome.sh board-qr -m 5c:01:3b:6b:af:6c
+bash scripts/smarthome.sh board-qr -m 5c:01:3b:6b:af:6c -t IoT_ESP32-S2R3
+```
+
+Giá trị nhập qua menu được validate regex (boardId `[a-zA-Z0-9_-]+` không bắt đầu bằng `-`; MAC 6 cặp hex) trước khi gọi — không truyền nổi flag lạ vào script gốc. Chi tiết thuật toán derive boardId từ MAC: mục 10.5.
+
+**Bước 6 — kiểm tra sau init.** `bash scripts/smarthome.sh status`: `amqtt` + `influxdb` phải `Up (healthy)`, `backend` `Up`; phần mDNS phải thấy `_smarthome._tcp`. Từ máy khác cùng Wi-Fi: `avahi-browse -rt _smarthome._tcp`. App mobile chỉ cần cùng Wi-Fi là tự dò server (mục 14).
+
+**Reboot.** Cả 3 service đều `restart: unless-stopped` và Docker chạy theo systemd → reboot xong stack tự sống lại, không cần chạy lệnh nào; kiểm tra bằng `status`. Server không được sleep (mục `Khởi tạo server` phía trên).
+
+**Update an toàn:**
+
+```bash
+cd Mobile_Backend
+git fetch
+git checkout <TAG_MỚI>
+bash scripts/smarthome.sh init   # .env giữ nguyên; pull/build bản mới rồi up --build
+```
+
+`.env` và volume `influxdb-data` không bị đụng; backup volume trước update lớn (mục `Backup volume InfluxDB`).
+
+**Secret safety.** `credentials-qr`/`pairing-code` in MQTT password + Influx token nguyên văn ra stdout/QR — chỉ chạy khi chủ động ghép nối board/app mới; không chụp màn hình public, không dán vào chat/commit/log. `.env` mode `600`, đã gitignore — không commit, không copy kèm repo.
+
+**Troubleshooting nhanh:**
+
+| Hiện tượng | Kiểm tra / xử lý |
+|---|---|
+| `init` dừng ngay "docker compose" | Docker Engine/Compose v2 chưa cài, hoặc user chưa vào group `docker` (đăng nhập lại sau `usermod -aG docker`) |
+| `init` dừng ở `docker compose config` | `.env` thiếu/sai giá trị — sửa rồi chạy lại `init` (`.env` hiện có không bị ghi đè) |
+| Pull/build fail | Mạng/registry; `init` idempotent — sửa xong chạy lại |
+| Container chưa healthy sau 120 s | `docker compose logs -f amqtt` / `influxdb` / `backend`; lần đầu InfluxDB setup có thể chậm — theo dõi rồi `status` lại |
+| Không thấy `_smarthome._tcp` | Hạn chế mDNS (AP isolation, laptop sleep, thiếu `avahi-utils`…) — xem mục `Khởi tạo server (mDNS discovery)` phía trên |
+| `credentials-qr` báo `MQTT_APP_PASSWORD` trống | `docker compose logs amqtt \| grep MQTT_APP_PASSWORD` rồi ghi giá trị đó vào `.env` |
+| Menu chọn gì cũng báo thiếu file `scripts/*` | Repo clone thiếu/ sai tag — checkout lại đúng bản phát hành |
 
 ### Backup volume InfluxDB
 
