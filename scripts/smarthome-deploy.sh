@@ -833,9 +833,17 @@ cmd_credentials_qr() {
       note "INFLUX_APP_TOKEN trống — mã QR chỉ chứa thông tin MQTT, bỏ qua influxToken."
     fi
 
+    lan_ip="$(detect_lan_ip || true)"
+    mqtt_prefix="${TOPIC_PREFIX:-smarthome}"
+    influx_org="${INFLUX_ORG:-smarthome}"
+    influx_bucket="${INFLUX_BUCKET:-telemetry}"
+
     # python3 json.dumps — password/token có dấu " / \ không làm vỡ JSON.
     # Secret truyền qua biến môi trường, không qua tham số dòng lệnh.
-    json="$(APP_USER="$app_user" APP_PASSWORD="$app_pass" INFLUX_APP_TOKEN="$influx_token" python3 - <<'PY'
+    json="$(APP_USER="$app_user" APP_PASSWORD="$app_pass" INFLUX_APP_TOKEN="$influx_token" \
+      MQTT_HOST="$lan_ip" MQTT_PORT="9001" MQTT_PREFIX="$mqtt_prefix" \
+      INFLUX_URL_IP="$lan_ip" INFLUX_ORG="$influx_org" INFLUX_BUCKET="$influx_bucket" \
+      python3 - <<'PY'
 import json, os
 
 payload = {
@@ -847,6 +855,20 @@ payload = {
 influx_token = os.environ.get("INFLUX_APP_TOKEN", "")
 if influx_token:
     payload["influxToken"] = influx_token
+# Non-secret: chỉ thêm field khi giá trị không rỗng (app cũ zod-strip field lạ — an toàn).
+# mqttPort 9001 = port WebSocket MQTT của app, cùng giá trị service mDNS quảng bá.
+if os.environ.get("MQTT_HOST"):
+    payload["mqttHost"] = os.environ["MQTT_HOST"]
+    payload["mqttPort"] = int(os.environ["MQTT_PORT"])
+if os.environ.get("MQTT_PREFIX"):
+    payload["mqttPrefix"] = os.environ["MQTT_PREFIX"]
+if os.environ.get("INFLUX_URL_IP"):
+    # 8086 = port HTTP InfluxDB, cùng giá trị TXT influx_port của mDNS.
+    payload["influxUrl"] = f"http://{os.environ['INFLUX_URL_IP']}:8086"
+if os.environ.get("INFLUX_ORG"):
+    payload["influxOrg"] = os.environ["INFLUX_ORG"]
+if os.environ.get("INFLUX_BUCKET"):
+    payload["influxBucket"] = os.environ["INFLUX_BUCKET"]
 print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 PY
 )"

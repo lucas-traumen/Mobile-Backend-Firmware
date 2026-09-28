@@ -111,7 +111,7 @@ Server khởi động lại (reboot, mất điện) thì hệ thống **tự ch�
    bash smarthome-deploy.sh credentials-qr
    ```
 
-   Mã này chứa **mật khẩu của app** — coi như chìa khóa nhà: chỉ hiện ra lúc ghép nối, không chụp màn hình hay gửi đi đâu.
+   Mã này chứa **mật khẩu của app** — coi như chìa khóa nhà: chỉ hiện ra lúc ghép nối, không chụp màn hình hay gửi đi đâu.    Mã còn kèm sẵn phần không nhạy cảm (địa chỉ máy chủ, MQTT WebSocket port, org/bucket InfluxDB — khi server nhận ra địa chỉ LAN của mình) để bản app mới tự điền hết sau khi quét; bản app hiện tại chỉ dùng phần mật khẩu, phần còn lại tự bỏ qua.
 
 3. Mở app trên điện thoại → quét mã QR ở bước 2 (hoặc dùng dò tìm tự động — app tự thấy server trong mạng).
 4. Xong. Các board đang hoạt động sẽ hiện dưới dạng thẻ trong app.

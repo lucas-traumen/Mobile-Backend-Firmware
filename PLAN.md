@@ -13,6 +13,9 @@
 - **2026-09-21 (log on-target M16/M18 user dán)**: BLE provisioning chạy đúng tới WiFi (ssid UTF-8 "Phòng toàn trai đẹp" OK, IP 192.168.2.17, advertise `IoTBoard-3b6baf6c` = M18 boardId-from-MAC hoạt động, fail-soft M16d đúng: `FAILED:ERROR` → chờ giá trị sửa, không reboot). Lỗi duy nhất: `mqtt_app_init` fail `Error parse uri = 192.168.2.28:1883` — **broker app gửi thiếu scheme `mqtt://`** (esp-mqtt yêu cầu scheme). Máy server đang là 192.168.2.28 (wlp4s0), mosquitto healthy listen 0.0.0.0:1883 → địa chỉ ĐÚNG, chỉ thiếu scheme. Plan **M19** (firmware normalize broker URI) đã soạn — **CHỜ USER DUYỆT**.
 - **2026-09-26**: M23 DONE + orchestrator verified (`run_id` `65d543ab-fd30-4f5a-a22a-86ef3f93afac`, session coder `ses_f2666d498ffe6mUpuOiihxzilK`). `idf.py build` do orchestrator chạy lại: exit 0, binary `0x1145d0`, 28% free. Chưa flash board `3b6baf6c`.
 - **2026-09-26**: M24 DONE — user đã duyệt triển khai; `M24:coder` DONE theo run `4f9d6c2e-7b19-4d8a-93e1-c5a0b6f4d812`, review APPROVE, orchestrator tự xác minh syntax/harness/compose gate sau hardening.
+- **2026-09-26**: M25 DONE — image-only deployment: user đã duyệt; `M25:coder` DONE theo run `2f61377e-84df-4859-af2a-5dcce1153825` (session `ses_f237827e7ffe4nNVDfotNwiIAw`, 2 vòng: implement + fix 3 finding review), review APPROVE (vòng 2 findings đã fix + verify), tester PASS, orchestrator tự verify **37/37** (sandbox fake-PATH + docker thật read-only). Chưa commit — chờ user.
+- **2026-09-26**: User yêu cầu viết lại `README.md` thành **user guide ngắn, dễ làm theo cho người không chuyên**, bỏ bớt nội dung kỹ thuật/nội bộ hiện đang làm rối luồng sử dụng. User đã duyệt M26; run `8a2cc6e0-7e6d-4f52-a8f4-0f86a60fe8f5` đã hoàn tất. Worktree đã có thay đổi M25 chưa commit; M26 không ghi đè hoặc mở rộng phạm vi sang các file đó.
+- **2026-09-28 (ops, không đụng code)**: user hỏi "QR không chứa mật khẩu InfluxDB". Gốc rễ: InfluxDB 2 dùng token chứ không dùng password cho app; script `credentials-qr` chỉ nhét `influxToken` khi `.env` có `INFLUX_APP_TOKEN` khác rỗng (token là bước manual sau khi server chạy — README "Token chỉ-đọc"). Phát hiện kèm: (1) bundle `~/smarthome` init sáng 28/9 **chưa từng chạy** — container `smarthome-*` kẹt "Created" do stack repo (từ 24/9) còn chiếm port 1883/9001/8086 → MQTT password bundle trong QR sáng nay cũng sẽ bị broker đang chạy từ chối; (2) `INFLUX_APP_TOKEN` cũ trong repo `.env` đã invalid (401) nhưng InfluxDB đang chạy còn token app-mobile hợp lệ. Đã fix ops: tách token live (verify query HTTP 200), ghi vào repo `.env`, verify MQTT connect user `app` OK, in lại QR đầy đủ. **Còn hở**: user chưa quyết có dời hẳn sang stack `~/smarthome` (M25) không — cần stop stack repo trước (DB mới sẽ rỗng, lịch sử nằm volume cũ).
 
 ## Trạng thái
 
@@ -703,6 +706,121 @@ Thứ tự M24: sau khi user duyệt, dispatch **một** `M24:coder`; coder xong
 
 **M24 hoàn tất (2026-09-26):** `scripts/smarthome.sh` mới + README section bootstrap/vận hành; coder xử lý hardening helper `server-init.sh`, cảnh báo Docker daemon, cleanup SIGTERM và câu README về dependency. Reviewer APPROVE. Tester bị giới hạn quyền shell nên không tự chạy lệnh, nhưng orchestrator đã chạy lại độc lập: `bash -n` PASS, harness fake-PATH **88/88 PASS**, `docker compose config --quiet` PASS, `git diff --check` PASS. Không chạy stack thật/không đụng volume; `.env` thật nguyên vẹn. Các thay đổi source M24 chưa commit theo quy định — chờ user yêu cầu commit nếu cần.
 
+### M25 (DONE 2026-09-26) — Image-only deployment: server mới không clone source
+
+**Lưu ý kiến trúc image (orchestrator verify 2026-09-26):** cả 2 image đã push đều là `linux/amd64` (digest `9e311234…` backend, `af58add0…` amqtt). Server đích phải là x86-64; thiết bị ARM (Raspberry Pi…) sẽ pull fail tới khi có multi-arch build. Script deploy phải check `uname -m` và WARN nếu không phải x86_64; README ghi rõ ràng buộc này.
+
+#### Mục tiêu
+
+Viết lại phần hướng dẫn user theo mô hình production/deployment: server mới chỉ cài tool host, tải **một file Bash bootstrap nhỏ**, file này tạo deployment bundle tối thiểu và `docker compose pull` các image đã build sẵn; không clone toàn bộ repo Mobile_Backend, không cần source TypeScript, firmware, Node/npm hoặc ESP-IDF trên server chạy thật.
+
+Docker Hub image contract đã chốt theo image user vừa push:
+
+- `trilucas/app_smarthome:backend-latest` — backend Node runtime đã build sẵn;
+- `trilucas/app_smarthome:amqtt-latest` — amqtt + dependency persistence đã build sẵn;
+- `influxdb:2.7.10` — image public upstream, vẫn pull trực tiếp.
+
+#### Ranh giới kỹ thuật phải ghi rõ
+
+README không được chỉ hướng user chạy `docker compose` hiện tại rồi tuyên bố không cần source, vì `docker-compose.yml` hiện tại còn dùng `build:` và cần `src/`, `Dockerfile`, `amqtt/Dockerfile`. M25 phải tách rõ hai luồng:
+
+- **Deployment server mới (khuyến nghị):** image-only, dùng compose/deployment bundle trỏ `image:`; không clone source.
+- **Development/build từ source:** giữ hướng dẫn hiện tại cho developer/CI, không dùng trên thiết bị production nếu không cần.
+
+Để README có lệnh thực sự chạy được, cần thêm một artifact nhỏ ngoài source compose hiện tại — dự kiến `scripts/smarthome-deploy.sh` dạng self-contained. Script này tự tạo thư mục runtime (mặc định `$HOME/smarthome` hoặc biến `SMART_HOME_DIR`), compose image-only, broker config, helper sinh password amqtt, avahi service template và `.env`; không tải `src/`/firmware. User chỉ cần tải script bằng HTTPS/`curl` từ GitHub raw hoặc release URL tin cậy rồi chạy.
+
+#### Luồng user từ số 0
+
+1. Flash Ubuntu Server/Debian, bật SSH, nối mạng LAN.
+2. Cài trên **host**: Docker Engine + Compose v2 theo tài liệu chính thức Docker, `curl`, `openssl`, `python3`, `avahi-daemon`, `avahi-utils`, `qrencode`; Docker không được cài bên trong container.
+3. Tải đúng phiên bản `smarthome-deploy.sh` từ release/raw URL, kiểm tra `sha256sum` nếu release cung cấp checksum, cấp quyền và chạy.
+4. Script tạo `.env` atomic, mode `600`, random các secret backend/broker/Influx; không in secret. Không tự sinh `INFLUX_APP_TOKEN` read-only.
+5. Script validate compose image-only, chạy `docker pull` cho đúng ba image, rồi `docker compose up -d` — không có `build:`/Dockerfile/source trên máy đích.
+6. Script cài mDNS service qua `sudo`, đợi `amqtt`/`influxdb` healthy và backend running, in trạng thái/port; nếu host firewall bật thì hướng dẫn mở 1883/9001/8086.
+7. Sau init, user dùng các subcommand của cùng script cho `credentials-qr`, `board-qr`, `pairing-code`, `status`, `logs`, `stop/start` hoặc dùng compose trong thư mục runtime. QR board nhận `--board-id`/`-m MAC`, không phụ thuộc ESP-IDF.
+8. Reboot: container có `restart: unless-stopped`; update: tải script/release mới hoặc chạy `pull` theo version, **không** xóa volumes. README phải cảnh báo `latest` là mutable; deployment production nên pin tag version/digest khi đã publish.
+
+#### Yêu cầu artifact image-only
+
+`smarthome-deploy.sh` phải:
+
+- không dùng `git clone`, không yêu cầu repo source, không dùng `docker compose build`;
+- có `set -euo pipefail`, quote biến, không `eval`, không source `.env` tùy tiện;
+- kiểm tra Docker/Compose v2/openssl/python3/curl và báo lệnh cài thiếu, không tự `apt`;
+- sinh `.env` từ template nhúng với `MQTT_PASSWORD`, `MQTT_APP_PASSWORD`, `INFLUXDB_INIT_PASSWORD`, token admin đồng nhất với `INFLUX_TOKEN`; `.env` có sẵn không ghi đè;
+- dùng đúng image tags `trilucas/app_smarthome:backend-latest` và `trilucas/app_smarthome:amqtt-latest`; cho phép override image/tag bằng biến môi trường để sau này pin digest/version;
+- tạo helper `amqtt-setup.sh` + `amqtt-passwd.py` và `broker.yaml` tối thiểu cần cho container, vì các file này không nằm trong image hiện tại;
+- tạo compose image-only với named volumes `amqtt-data`/`influxdb-data`, ports 1883/9001/8086, healthchecks và `restart: unless-stopped`;
+- cài/copy avahi service an toàn, giữ contract `_smarthome._tcp` port 9001 + TXT `prefix`, `influx_port`, `influx_org`, `influx_bucket`, không đưa secret vào mDNS;
+- cung cấp QR/status wrappers mà không cần các script source hiện tại, hoặc tự tạo runtime helper tương đương trong bundle;
+- idempotent: chạy lại không mất `.env`/volume, không tự `down -v`, không in secret; có `--help` và lỗi rõ ràng.
+
+#### README cần viết lại
+
+Thêm một mục deployment đứng trước hoặc làm entrypoint chính cho mục chạy server:
+
+- bảng phân biệt **server deployment image-only** và **developer build từ source**;
+- prerequisite OS/network/SSH và Docker Engine + Compose v2;
+- lệnh tải script/verify checksum/chạy lần đầu (dùng URL placeholder nếu chưa có release chính thức, không bịa URL chưa tồn tại);
+- giải thích chính xác hai image Docker Hub và image InfluxDB upstream;
+- menu/subcommand: init, credentials QR, board QR bằng MAC/id, pairing code, status/logs;
+- thứ tự `generate .env → config → pull → up → healthy → mDNS`;
+- xử lý Docker Hub public/private (`docker login` chỉ cần nếu repository private), firewall, mDNS/AP isolation;
+- reboot, update/pin tag hoặc digest, backup volume InfluxDB, troubleshooting;
+- secret safety: `.env`/QR/token không commit, không gửi chat; `INFLUX_APP_TOKEN` read-only phải tạo sau khi Influx chạy, không dùng admin token cho app.
+
+Không xóa hướng dẫn source hiện tại; đổi tiêu đề/ghi chú để tránh user mới chạy nhầm compose `build:`. README phải nói rõ image đã build sẵn nhưng vẫn cần các file runtime nhỏ (compose/config/helper), vì Docker image không tự chứa host-side mDNS và `.env`.
+
+| task_key | Việc | File chính | Tiêu chí đạt | Lệnh kiểm tra |
+|---|---|---|---|---|
+| M25:coder | Tạo standalone `scripts/smarthome-deploy.sh` cho image-only runtime; cập nhật README thành runbook server mới từ OS trắng; giữ luồng source/developer riêng | `scripts/smarthome-deploy.sh` (mới), `README.md`, có thể thêm `deploy/` chỉ khi artifact không nhúng được an toàn | Script không clone/source/build; tạo bundle + `.env` mode 600; compose dùng đúng 2 image Docker Hub + InfluxDB; pull trước up; idempotent, không mất volume/secret; mDNS/health/QR/status hoạt động; README không mâu thuẫn và không bịa release URL | `bash -n`; shell harness fake Docker/sudo/curl; kiểm tra compose render không có `build:`; `docker pull`/`docker inspect` image tags thật; `docker compose config --quiet` trên bundle tạm; grep không có source/build path; README checklist |
+
+Thứ tự sau khi duyệt: một `M25:coder`; coder xong dispatch reviewer và tester song song; orchestrator tự kiểm tra bundle trong thư mục tạm, không phá stack/volume hiện tại. Chỉ ghi M25 DONE sau khi verify được deployment compose image-only và README khớp đúng image tags user đã push.
+
+**M25 hoàn tất (2026-09-26):** `scripts/smarthome-deploy.sh` mới (1215 dòng, self-contained — nhúng verbatim broker.yaml + amqtt-setup.sh + amqtt-passwd.py + avahi service; compose image-only render qua `${BACKEND_IMAGE:-…}`/`${AMQTT_IMAGE:-…}`/`${INFLUX_IMAGE:-…}` với precedence chuẩn caller env > `.env` runtime > default) + README mục "Triển khai server thật từ OS trắng (image-only, khuyến nghị)" đặt trước luồng developer. Vòng 2 fix 3 finding review: (1) MEDIUM bỏ export default 3 biến image → pin digest qua `.env` runtime hoạt động đúng; (2) credentials-qr/pairing-code chạy trong subshell → không infect env compose trong phiên menu; (3) `BOARD_TYPE_RE` `*`→`+` + check rỗng. Reviewer APPROVE, tester PASS toàn bộ. Orchestrator tự verify độc lập `/tmp/opencode/m25-orch-verify/verify.sh`: **37/37 PASS** — bundle 6 file, .env 600/token đồng nhất/4 secret unique/không placeholder/không leak, thứ tự config→pull→up (không build), precedence A/B/C, render không `build:` + SIGINT + 3× restart + 2 healthcheck + 2 volumes, 4 file nhúng verbatim (diff), idempotent, MAC→`3b6baf6c`, `-t` rỗng chặn, update chỉ pull+up-d, stop chỉ compose stop, menu EOF sạch, subshell sạch. Rủi ro còn lại: URL raw README chỉ sống sau khi push commit lên `main`; image `latest` mutable (README hướng dẫn pin); amd64-only.
+
+### M26 (ĐÃ DUYỆT 2026-09-26) — README user guide nhanh cho người không chuyên
+
+#### Mục tiêu
+
+Viết lại tài liệu vào vai trò **hướng dẫn sử dụng**, không phải tài liệu kỹ thuật. Người mới mở README phải biết ngay hệ thống dùng để làm gì, cần chuẩn bị gì, chạy lệnh nào, mở app ra sao, cấu hình board mới thế nào và xử lý vài lỗi thường gặp — không cần hiểu MQTT, Docker Compose, TypeScript, InfluxDB hay ESP-IDF.
+
+#### Phạm vi nội dung
+
+- Giữ `README.md` ngắn, ưu tiên luồng image-only M25 cho server chạy thật; bỏ đánh số milestone/M1–M25, lịch sử triển khai, chi tiết source tree, contract MQTT, GATT/UUID, Flux query, unit/integration test và giải thích nội bộ khỏi README chính.
+- Cấu trúc đề xuất:
+  1. **Smart Home là gì?** — một đoạn ngắn và sơ đồ tối giản: server + board + điện thoại cùng mạng.
+  2. **Bạn cần gì?** — server x86-64 có Internet, board đã có firmware phù hợp, điện thoại cùng Wi-Fi; ghi rõ giới hạn ARM và trường hợp cần người kỹ thuật flash firmware.
+  3. **Cài server lần đầu** — checklist theo thứ tự, lệnh copy/paste tối thiểu, tải `smarthome-deploy.sh`, chạy `init`, chờ trạng thái healthy.
+  4. **Kết nối ứng dụng** — tạo/in QR credentials hoặc pairing code, mở app, cùng Wi-Fi, nhập/quét đúng thông tin; giải thích secret bằng ngôn ngữ dễ hiểu.
+  5. **Thêm board mới** — tạo QR board bằng MAC/board ID, mở chế độ BLE bằng nút BOOT nếu cần, quét QR và làm theo app; cảnh báo giữ board gần điện thoại và không chia sẻ QR.
+  6. **Dùng hằng ngày** — bảng lệnh rất ngắn cho `status`, `logs`, `start`, `stop`, `update`; reboot tự khởi động lại.
+  7. **Xử lý nhanh** — server/app/board không thấy nhau, container chưa sẵn sàng, sai mật khẩu, Wi-Fi khác mạng, ARM không chạy; mỗi lỗi chỉ nêu kiểm tra và hành động tiếp theo.
+  8. **An toàn dữ liệu** — không gửi `.env`, mật khẩu, token hoặc QR lên chat/public; không xóa volume khi update; nhắc backup ở mức người dùng.
+- Không bịa URL release/tag chưa tồn tại. Nếu link tải raw phụ thuộc việc push commit, ghi một ghi chú ngắn hoặc dùng placeholder rõ ràng thay vì biến README thành tài liệu triển khai dài.
+- Giữ lại các hướng dẫn kỹ thuật cần cho developer trong một file riêng `docs/developer-guide.md` bằng cách chuyển các phần hữu ích từ README hiện tại sang đó (nếu cần để không làm mất thông tin); README chính chỉ link tới tài liệu này ở cuối.
+- Không sửa logic ứng dụng, firmware, compose hay `scripts/smarthome-deploy.sh` trong M26. Không đụng các thay đổi M25 và các thay đổi `.opencode/agents/*` đang có sẵn.
+
+#### Tiêu chí đạt
+
+- Người không chuyên có thể đi từ README đến một stack đang chạy bằng một luồng chính, không phải chọn giữa nhiều luồng kỹ thuật.
+- README không còn các mục đánh số dài và thuật ngữ nội bộ không cần thiết; mọi thuật ngữ bắt buộc phải có giải thích một câu.
+- Tất cả lệnh user guide khớp với `scripts/smarthome-deploy.sh` M25 và image contract hiện tại; không hướng dẫn chạy nhầm compose `build:` của developer.
+- Các cảnh báo quan trọng vẫn còn: cùng mạng LAN, x86-64/ARM, không chia sẻ secret, không `down -v`, board mới có thể cần flash/provision BLE.
+- Link nội bộ không hỏng; code block copy/paste được; không còn tham chiếu M-number trong luồng người dùng.
+
+| task_key | Việc | File được phép sửa | Tiêu chí kiểm tra |
+|---|---|---|---|
+| M26:coder | Rút gọn và viết lại README thành user guide; chuyển phần kỹ thuật cần giữ sang `docs/developer-guide.md` nếu phù hợp | `README.md`, có thể thêm/sửa `docs/developer-guide.md`; không sửa file khác | Đối chiếu checklist M26; kiểm tra link/heading/code block; `git diff --check`; không có thay đổi ngoài phạm vi |
+
+Thứ tự: sau khi user duyệt đã dispatch **một `M26:coder`**, rồi `M26:review` và `M26:test` song song. Orchestrator đã đọc lại README, đối chiếu link/lệnh và chạy kiểm tra độc lập trước khi chốt.
+
+**M26:coder DONE 2026-09-26:** session `ses_f21c76002ffe08ItzzIBFmnz2k` đã rút `README.md` còn 206 dòng, tạo `docs/developer-guide.md` 526 dòng để giữ nội dung kỹ thuật; không đụng file ngoài phạm vi M26/M25. Vòng sửa đã xử lý 6 finding của review, gồm cú pháp tạo user/token read-only Influx đúng với bucket ID, trạng thái health, Ubuntu/Debian, mDNS và troubleshooting.
+
+**M26:review APPROVE + M26:test PASS 2026-09-26:** reviewer xác nhận README đủ luồng user guide, cảnh báo an toàn, lệnh/subcommand và link; tester xác nhận các lệnh tài liệu khớp script, không có secret thật/M-number trong README chính, anchor chính hợp lệ. Orchestrator tự chạy `git diff --check` và `bash -n scripts/smarthome-deploy.sh` — cả hai PASS. M26 DONE.
+
+**Rủi ro/follow-up không chặn M26:** `scripts/smarthome-deploy.sh` và một số tài liệu cũ ngoài phạm vi vẫn có tham chiếu README mục số hoặc gợi ý tạo Influx token chưa đồng bộ; để một task riêng nếu cần sửa script/cross-reference. M26 chỉ sửa `README.md` và thêm `docs/developer-guide.md`.
+
 ## Kiểm thử
 
 Tự động (không cần phần cứng):
@@ -713,6 +831,21 @@ Tự động (không cần phần cứng):
 
 Cần ESP32 thật (ghi rõ trong README phần "cần phần cứng"):
 - Đọc SHT30/SHT31 thật qua I2C (CRC/timing thực tế), Wi-Fi thật qua LAN, LWT `offline` thật khi rút nguồn, chuỗi QoS 1 end-to-end, chọn đúng chân SDA/SCL cho loại module.
+
+### M27 (ĐÃ DUYỆT 2026-09-28 — user "ok") — Credentials QR kèm trường non-secret (tự đủ, có cả MQTT)
+
+Bối cảnh (2026-09-28): user quét QR xong thấy trường Influx URL trong app vẫn trống. Thiết kế contract hiện tại: **QR chỉ mang secret** (`mqttUsername/mqttPassword/influxToken` — zod `CredentialsQrSchema` phía app strip field lạ), **non-secret (Influx URL/org/bucket + MQTT host/port/prefix) do mDNS dò tìm tự điền** (Bước 1 "Tìm máy chủ trong mạng"). mDNS trên server đã verify đang sống (avahi active, `_smarthome._tcp` trên wlp4s0, TXT prefix/influx_port/influx_org/influx_bucket đủ). Trên Android emulator multicast thường không qua bridge NAT → discovery fail → user phải gõ tay URL.
+
+Phương án đề xuất (mở rộng contract hai phía, tương thích lùi — comment trong `secretsQrContract.ts` đã ghi rõ "Unknown/extra fields are tolerated (zod default strip) so server tooling can enrich the payload without breaking older app versions"):
+
+- **M27a:coder (repo này)**: `scripts/credentials-qr.sh` + `cmd_credentials_qr` trong `scripts/smarthome-deploy.sh` thêm field non-secret vào JSON QR: `influxUrl` (build `http://<lan_ip>:8086` bằng `detect_lan_ip` — cùng logic pairing-code), `influxOrg` (`INFLUX_ORG` từ .env), `influxBucket` (`INFLUX_BUCKET`). Update comment đầu file + README dòng mô tả QR. App cũ bỏ qua field lạ — an toàn. Kiểm thử: chạy script, JSON có đủ 6 field; `bash -n` 2 script xanh.
+- **M27b (repo Mobile_Frontend)**: extend `CredentialsQrSchema` + `CredentialsQrPatch` + applier trong `AdvancedSettingsScreen` nhận `influxUrl/influxOrg/influxBucket` optional, keep-current, fill-never-save; test cho case đủ/thiếu field. Không có M27b thì field mới trong QR không có tác dụng trên app hiện tại.
+
+Lưu ý giới hạn: `influxUrl`/`mqttHost` trong QR là IP LAN của server → đúng cho điện thoại thật cùng Wi-Fi; emulator vẫn phải sửa tay `10.0.2.2`. Câu hỏi mở đã chốt theo "ok" của user: **QR tự đủ** — nhembed luôn `mqttHost/mqttPort/mqttPrefix` (keep-current phía app, mDNS vẫn thắng nếu user dò tìm trước vì giá trị trùng nhau).
+
+- `run_id`: `9dda7b23-ea22-4c5c-9580-03c503633bef`. Dispatch `M27a:coder` 2026-09-28 (files: `scripts/credentials-qr.sh`, `scripts/smarthome-deploy.sh`, README.md additive — không đụng `.env`, không đụng M25/M26 artifact khác).
+- **M27a:coder DONE — orchestrator verified 2026-09-28** (2 vòng cùng session `ses_f19ccb65dffeaxOeXUBGC0ur4l`; reviewer session `ses_f19c7b22cffe6VQs370nAxhaZ7`). Vòng 1: 6 field non-secret `mqttHost/mqttPort(number 9001)/mqttPrefix/influxUrl/influxOrg/influxBucket` vào payload QR cả 2 nơi sinh (script repo + `cmd_credentials_qr` deploy), chỉ xuất hiện khi giá trị không rỗng, secret vẫn qua env-var → python heredoc, `detect_lan_ip` copy nguyên bản; README +1 câu. Review **APPROVE-with-nits** (0 blocker). Vòng 2 vá 2 nit: guard `qrencode` fail (mirror `qr_print`, script vẫn exit 0) + README chèn mệnh đề "khi server nhận ra địa chỉ LAN của mình". Orchestrator tự chạy lại toàn bộ: `bash -n` 2 script exit 0; test guard bằng qrencode giả fail → exit_code=0 + cảnh báo stderr đúng + JSON đủ 11 key; chạy thật QR block 39 dòng; README đúng 1 chỗ dòng 114; `git status` chỉ đúng 3 file dự kiến. Tester skip — thay đổi thuần bash/doc, orchestrator đã tự chạy toàn bộ lệnh kiểm tra (tiền lệ M15b). Nit cosmetic còn lại (không chặn): dòng 114 README có 4 dấu cách giữa 2 câu — mid-line space markdown render thành 1 dấu cách, vô hại thị giác. **Còn: M27b (app Mobile_Frontend nhận field mới — chưa có thì field trong QR inert) + on-target user test.**
+
 
 ## Câu hỏi mở (trả lời khi duyệt — mặc định sẽ theo phương án ghi)
 
