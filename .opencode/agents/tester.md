@@ -1,7 +1,7 @@
 ---
 description: Chạy test/build/typecheck và báo cáo bằng chứng — không sửa source, chỉ được duyệt lệnh kiểm tra
 mode: subagent
-model: xkiro/z-ai/glm-5.3
+model: xkiro/x-ai/grok-4.7
 permission:
   task: "deny"
   edit: "deny"

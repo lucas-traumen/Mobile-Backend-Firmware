@@ -1,7 +1,7 @@
 ---
 description: Review code đã làm — chỉ đọc và báo finding, không sửa file, không chạy lệnh
 mode: subagent
-model: nexusmmo/qwen3.8-max
+model: xkiro/z-ai/glm-5.3
 permission:
   task: "deny"
   edit: "deny"
