@@ -4,6 +4,7 @@
 
 ## Run hiện tại
 
+- **2026-09-28: ĐÃ COMMIT toàn bộ worktree dồn 3 đợt** theo yêu cầu user — `936f049` chore (model reviewer/tester), `533f183` M25 (smarthome-deploy.sh), `e98fc1d` M26 (README user guide + developer-guide.md), `4eb9ba3` M27a (QR non-secret fields + PLAN.md). Các dòng log "Chưa commit — chờ user" phía dưới là trạng thái LỊCH SỬ tại thời điểm ghi, đã hết hiệu lực. Branch ahead origin/main 5 commit (kể cả M24 `4285dbe`) — chưa push theo yêu cầu.
 - `run_id`: `1677db7c-acaf-49c9-820e-fb7fc4659151` — workflow M15 (MQTT host normalization: doc + handoff frontend), tạo khi dispatch `M15b:coder` 2026-09-17. Phase: done (phần việc repo này).
 - Run cũ `038c62c7-4698-4ee9-ae58-9c1296386ef1` (workflow M14) vẫn còn M14c treo chờ user flash firmware v2 — xem mục M14.
 - **2026-09-22**: M19:coder DONE + verified (run `014bb9ea` — normalize broker URI scheme-less + đóng residual M18). On-target 2026-09-23 bị chặn sớm hơn bởi bug **M20** (race `wifi_conn_apply_credentials` khi driver đang connecting) — **M20:coder DONE + orchestrator verified 2026-09-23** (run `6d2b0587` — build 0 warning + harness 51/51). Còn: user flash binary cumulative M19+M20 + re-provision → sau CONNECTED orchestrator verify end-to-end + đóng M14c.
