@@ -111,6 +111,31 @@ bool mqtt_app_is_connected(void);
  */
 esp_err_t mqtt_app_publish_telemetry(float temp_c, float rh_pct);
 
+/**
+ * @brief Re-assert the retained `status = online` record.
+ *
+ * The broker only detects a dead socket when its keepalive expires, so the
+ * LWT `offline` of a session that already died can be published AFTER the next
+ * session's CONNECTED `online`. That ordering pins the retained status to
+ * `offline` for as long as the live session lasts — the board looks offline to
+ * every subscriber while telemetry and relay commands keep working. Call this
+ * periodically (the sensor task does, see MQTT_HEARTBEAT_PERIOD_MS in main.c)
+ * to converge the retained record back to `online` without a reboot.
+ *
+ * Publishing an unchanged state is idempotent for subscribers: the app only
+ * re-renders the same `online` it would show after a reconnect.
+ *
+ * Touches no relay state, so it is safe to call from any task.
+ *
+ * @return
+ *      - ESP_OK — accepted by the client.
+ *      - ESP_ERR_INVALID_STATE — not initialized or not connected (dropped;
+ *        the CONNECTED handler publishes a fresh `online` on reconnect).
+ *      - ESP_ERR_NO_MEM — outbox full (dropped).
+ *      - ESP_FAIL — publish failed (dropped).
+ */
+esp_err_t mqtt_app_publish_heartbeat(void);
+
 #ifdef __cplusplus
 }
 #endif

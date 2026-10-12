@@ -25,6 +25,11 @@ plugins:
   # Log connect/disconnect. Value rỗng = dùng default config.
   amqtt.plugins.logging_amqtt.EventLoggerPlugin:
 
+  # Log mọi packet MQTT đi/ra ở mức DEBUG (dạng `<client_id> <-in-- <packet>` /
+  # `<client_id> -out-> <packet>`) — chỉ hiện khi bật `-d` (AMQTT_DEBUG trong
+  # docker-compose.yml), vô hại khi broker chạy mức INFO mặc định.
+  amqtt.plugins.logging_amqtt.PacketLoggerPlugin:
+
   # Auth bắt buộc — file `username:hash` mỗi dòng, hash argon2id (sha512-crypt
   # đã deprecated từ 0.12, Python 3.13 bỏ `crypt`). File sinh lúc start bởi
   # scripts/amqtt-setup.sh vào /app/data (volume, sống qua restart).

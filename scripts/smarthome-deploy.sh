@@ -191,7 +191,9 @@ services:
       PASSWD_FILE: /app/data/passwd
       PASSWD_HELPER: /usr/local/bin/amqtt-passwd.py
     # Sinh passwd từ env rồi exec broker — `exec` để amqtt trở thành PID 1.
-    command: ["/bin/sh", "-c", "/usr/local/bin/amqtt-setup.sh && exec amqtt -c /app/conf/broker.yaml"]
+    # M28: debug wire-trace — thêm `AMQTT_DEBUG=1` vào .env rồi
+    # `docker compose up -d amqtt` (recreate); nhớ tắt sau vì log rất nhiều.
+    command: ["/bin/sh", "-c", "/usr/local/bin/amqtt-setup.sh && exec amqtt ${AMQTT_DEBUG:+-d} -c /app/conf/broker.yaml"]
     # amqtt 0.12 chỉ graceful-shutdown trên SIGINT — docker stop/restart/down
     # gửi thẳng đúng signal amqtt cần (chi tiết trong docker-compose.yml repo).
     stop_signal: SIGINT
@@ -279,6 +281,11 @@ listeners:
 plugins:
   # Log connect/disconnect. Value rỗng = dùng default config.
   amqtt.plugins.logging_amqtt.EventLoggerPlugin:
+
+  # Log mọi packet MQTT đi/ra ở mức DEBUG (dạng `<client_id> <-in-- <packet>` /
+  # `<client_id> -out-> <packet>`) — chỉ hiện khi bật `-d` (AMQTT_DEBUG trong
+  # docker-compose.yml), vô hại khi broker chạy mức INFO mặc định.
+  amqtt.plugins.logging_amqtt.PacketLoggerPlugin:
 
   # Auth bắt buộc — file `username:hash` mỗi dòng, hash argon2id (sha512-crypt
   # đã deprecated từ 0.12, Python 3.13 bỏ `crypt`). File sinh lúc start bởi
@@ -833,7 +840,6 @@ cmd_credentials_qr() {
       note "INFLUX_APP_TOKEN trống — mã QR chỉ chứa thông tin MQTT, bỏ qua influxToken."
     fi
 
-    lan_ip="$(detect_lan_ip || true)"
     mqtt_prefix="${TOPIC_PREFIX:-smarthome}"
     influx_org="${INFLUX_ORG:-smarthome}"
     influx_bucket="${INFLUX_BUCKET:-telemetry}"
@@ -841,8 +847,8 @@ cmd_credentials_qr() {
     # python3 json.dumps — password/token có dấu " / \ không làm vỡ JSON.
     # Secret truyền qua biến môi trường, không qua tham số dòng lệnh.
     json="$(APP_USER="$app_user" APP_PASSWORD="$app_pass" INFLUX_APP_TOKEN="$influx_token" \
-      MQTT_HOST="$lan_ip" MQTT_PORT="9001" MQTT_PREFIX="$mqtt_prefix" \
-      INFLUX_URL_IP="$lan_ip" INFLUX_ORG="$influx_org" INFLUX_BUCKET="$influx_bucket" \
+      MQTT_PORT="9001" MQTT_PREFIX="$mqtt_prefix" \
+      INFLUX_ORG="$influx_org" INFLUX_BUCKET="$influx_bucket" \
       python3 - <<'PY'
 import json, os
 
@@ -855,16 +861,13 @@ payload = {
 influx_token = os.environ.get("INFLUX_APP_TOKEN", "")
 if influx_token:
     payload["influxToken"] = influx_token
-# Non-secret: chỉ thêm field khi giá trị không rỗng (app cũ zod-strip field lạ — an toàn).
+# Non-secret hằng cấu hình: chỉ thêm field khi giá trị không rỗng (app cũ zod-strip field lạ — an toàn).
+# M29: KHÔNG có mqttHost/influxUrl — IP là biến, QR là mã chung ổn định; địa chỉ
+# app tự dò qua mDNS ("Tìm máy chủ trong mạng") hoặc nhập tay fallback (emulator).
 # mqttPort 9001 = port WebSocket MQTT của app, cùng giá trị service mDNS quảng bá.
-if os.environ.get("MQTT_HOST"):
-    payload["mqttHost"] = os.environ["MQTT_HOST"]
-    payload["mqttPort"] = int(os.environ["MQTT_PORT"])
+payload["mqttPort"] = int(os.environ["MQTT_PORT"])
 if os.environ.get("MQTT_PREFIX"):
     payload["mqttPrefix"] = os.environ["MQTT_PREFIX"]
-if os.environ.get("INFLUX_URL_IP"):
-    # 8086 = port HTTP InfluxDB, cùng giá trị TXT influx_port của mDNS.
-    payload["influxUrl"] = f"http://{os.environ['INFLUX_URL_IP']}:8086"
 if os.environ.get("INFLUX_ORG"):
     payload["influxOrg"] = os.environ["INFLUX_ORG"]
 if os.environ.get("INFLUX_BUCKET"):

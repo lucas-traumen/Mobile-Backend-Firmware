@@ -342,7 +342,7 @@ python "$IDF_PATH/tools/idf.py" -p /dev/ttyUSB0 monitor
 | Descriptor → app/backend | `{prefix}/boards/{boardId}/descriptor` | JSON descriptor | 1 / **retained** |
 | Telemetry → backend | `{prefix}/boards/{boardId}/telemetry` | JSON telemetry v2 | 1 / không |
 | Sensor state → app | `{prefix}/boards/{boardId}/sensors/{S}/state` | số thuần (vd `25.74`) | 1 / **retained** |
-| Trạng thái (LWT) → app | `{prefix}/boards/{boardId}/status` | `online` / `offline` thuần | 1 / **retained** |
+| Trạng thái (LWT + heartbeat) → app | `{prefix}/boards/{boardId}/status` | `online` / `offline` thuần | 1 / **retained** |
 | Relay state → app | `{prefix}/boards/{boardId}/relays/{K}/state` | `ON` / `OFF` thuần | 1 / **retained** |
 | App → relay | `{prefix}/boards/{boardId}/relays/{K}/set` | `ON` / `OFF` thuần | 1 / không |
 
@@ -474,6 +474,7 @@ Ghi chú:
 - Đổi `smarthome` (org) và `telemetry` (bucket) theo `INFLUXDB_INIT_ORG`/`INFLUXDB_INIT_BUCKET` nếu cài với giá trị khác mặc định.
 - Gợi ý in kèm `pairing-code` khi thiếu token hiển thị `--read-bucket <tên-bucket>` — dùng lệnh ở trên thay vì gợi ý đó (gợi ý sẽ lỗi khi user chưa tồn tại và `--read-bucket` không nhận tên).
 - Copy token vào `.env` (`INFLUX_APP_TOKEN=...`) rồi chạy lại `bash smarthome-deploy.sh credentials-qr` để QR cho app kèm `influxToken`.
+- Mã QR credentials chỉ mang thông tin đăng nhập (`mqttUsername`/`mqttPassword`/`influxToken`) và hằng cấu hình (`mqttPort`/`mqttPrefix`/`influxOrg`/`influxBucket`) — **không chứa địa chỉ** (từ M29 bỏ `mqttHost`/`influxUrl` vì IP LAN là biến, đổi mạng/reboot là sai). Địa chỉ máy chủ (MQTT host, Influx URL) app tự dò qua mDNS (nút "Tìm máy chủ trong mạng") hoặc nhập tay trong môi trường không dò được (emulator).
 
 ### Sao lưu và phục hồi dữ liệu
 
@@ -501,6 +502,32 @@ docker compose start influxdb
 
 **Tuyệt đối không `docker compose down -v`** — xóa volume là mất dữ liệu telemetry/session. Update lớn (đổi major version InfluxDB…) luôn backup trước.
 
+## Công cụ debug amqtt
+
+Một cửa: `bash scripts/mqtt-debug.sh` (chạy trên host, chỉ đọc — không restart/đụng container). Ba lớp quan sát, từ nhẹ đến nặng:
+
+1. **Sự kiện broker (INFO)** — `bash scripts/mqtt-debug.sh events` (thêm pattern để lọc, vd `bash scripts/mqtt-debug.sh events 'connect|disconnect'`).
+2. **Wire-trace mọi packet MQTT (DEBUG)** — bật trong `docker-compose.yml` qua plugin `PacketLoggerPlugin` (đã khai trong `amqtt/broker.yaml`, chỉ log ở mức DEBUG): thêm `AMQTT_DEBUG=1` vào `.env` rồi `docker compose up -d amqtt` (recreate container) — broker chạy lại với cờ `-d` và log từng packet đi/ra (`<client_id> <-in-- <packet>` / `-out->`). **Nhớ tắt** (xóa `AMQTT_DEBUG` khỏi `.env`, up lại) sau khi debug xong vì log rất nhiều.
+3. **Dữ liệu bên trong broker** — `bash scripts/mqtt-debug.sh retained` (topic retained + session lưu trong sqlite `/app/data/amqtt.db`, mở READ-ONLY) và `bash scripts/mqtt-debug.sh tap` (subscribe trực tiếp, mỗi dòng in dạng `topic  payload`; không truyền filter thì mặc định `smarthome/#`; `-n SỐ` đọc N message rồi tự thoát). `tap` lọc client-side: chỉ in message khớp filter yêu cầu — retained khớp filter vẫn in ngay lúc subscribe (có chủ đích).
+
+Ghi chú kỹ thuật (root-cause nhiễu retained trên broker 0.12.1): hàm `_handle_client_session` của broker chạy lúc MỖI client connect — ngay sau CONNACK, broker duyệt filter của MỌI subscription đang tồn tại (kể cả các session khôi phục từ sqlite) và replay retained khớp từng filter đó cho client mới, TRƯỚC khi client kịp subscribe. Hệ quả: subscribe một topic mới tinh vẫn nhận được retained "lạ" từ filter rộng nào đó đang có trên broker. `_matches()` của broker đúng — chỉ là phạm vi replay sai. App/backend không bị hại thực tế (filter của chúng khớp đúng thứ chúng cần), nhưng khi debug bằng tay thì dòng junk lẫn dòng thật khó phân biệt — `tap` của `mqtt-debug.sh` đã lọc client-side + in kèm topic để chỉ hiện đúng filter yêu cầu.
+
+Ghi chú về session tích lũy: các CLI tool (vd `amqtt_pub`/`amqtt_sub` chạy không `--clean-session`) để lại session trong `stored_sessions` mãi — client_id random (`amqtt_pub/113-...`) không bao giờ reconnect để dọn. Đó là lý do `retained` liệt kê nhiều session `amqtt_pub/*`/`amqtt_sub/*`; vô hại nhưng làm danh sách dài, và chính các session đó (mang filter) là nguồn replay junk nói trên.
+
+Bảng "triệu chứng → lệnh":
+
+| Triệu chứng | Lệnh |
+|---|---|
+| Board không lên (không thấy status/descriptor) | `bash scripts/mqtt-debug.sh events` (xem connect/disconnect, auth fail); `bash scripts/mqtt-debug.sh tap 'smarthome/boards/<boardId>/#'` |
+| Giá trị UI sai (nghi ngờ dữ liệu vào) | `bash scripts/mqtt-debug.sh tap 'smarthome/boards/<boardId>/sensors/#'` — so payload với UI; `bash scripts/mqtt-debug.sh retained` — xem state relay/state sensor retained |
+| Nghi retained bẩn (topic cũ, giá trị sai mãi) | `bash scripts/mqtt-debug.sh retained` — liệt kê topic + kích thước; xóa tay bằng publish payload rỗng (retained empty) lên đúng topic |
+| Client không connect được | `bash scripts/mqtt-debug.sh events 'auth|error|Connect'`; nếu cần từng packet: bật `AMQTT_DEBUG=1` (lớp 2 ở trên) |
+
+Cảnh báo:
+
+- **CẢNH BÁO:** `AMQTT_DEBUG=1` ghi **mật khẩu MQTT ở dạng thô** vào log container — ở mức DEBUG, plugin log repr của mọi packet, kể cả packet CONNECT của từng client (ESP32/backend/app) mà `ConnectPayload.__repr__` (amqtt 0.12.1, `mqtt/connect.py`) in `password={...}` không che. Log đó nằm trong `docker compose logs amqtt` và **tồn tại trên đĩa** (json-file log driver). Chỉ bật khi đang debug, tắt ngay sau; cân nhắc giới hạn người xem log và dọn log container sau phiên debug nếu môi trường đòi hỏi (log cũng sinh **rất nhiều** — mọi packet, cả payload).
+- `tap` luôn dùng `--clean-session` — không để lại session rác trong sqlite của broker (không thì sqlite phình session `amqtt_sub/...` như đã thấy).
+
 ## Kiểm thử
 
 Tự động (không cần phần cứng):
@@ -514,7 +541,7 @@ Các phần bắt buộc phải có ESP32 thật để xác minh:
 
 1. **Đọc SHT3x thật qua I2C** — CRC-8 và timing thực tế; cần external pull-up 4.7 kΩ nếu module không có sẵn.
 2. **Wi-Fi LAN thật** — retry/backoff khi AP rớt, đổi IP/DHCP.
-3. **LWT offline** — rút nguồn ESP32 → broker publish retained `offline` lên `{prefix}/boards/{boardId}/status`; connect lại → `online` (kèm descriptor + state relay).
+3. **LWT offline** — rút nguồn ESP32 → broker publish retained `offline` lên `{prefix}/boards/{boardId}/status`; connect lại → `online` (kèm descriptor + state relay). **Kèm heartbeat**: task sensor re-publish retained `online` mỗi `MQTT_HEARTBEAT_PERIOD_MS` (60 s). Cần thiết vì broker chỉ phát hiện socket chết khi keepalive hết hạn — LWT `offline` của session đã chết có thể được publish SAU `online` của session kế tiếp, ghim retained về `offline` suốt session đang sống (telemetry + relay vẫn chạy). Heartbeat hội tụ lại `online` trong 1 chu kỳ, không cần reboot. Verify: `bash scripts/mqtt-debug.sh retained` thấy `online` trong khi telemetry đang chảy.
 4. **QoS 1 end-to-end** — mất mạng rồi có lại: message retransmit tới khi broker nhận; outbox không tăng vô hạn (`MQTT_OUTBOX_LIMIT` — đầy thì drop + log).
 5. **Chân SDA/SCL** theo loại module cụ thể — đổi qua `SHT3X_I2C_SDA_GPIO`/`SHT3X_I2C_SCL_GPIO`.
 6. **BLE provisioning trên board thật** — RF/BLE stack không mô phỏng được trên host: build `WIFI_SSID=""`, quét `IoTBoard-*` bằng app, pair Just Works, nhận `CONNECTED`/`FAILED:*`, BLE tự tắt 30 s, boot sau dùng NVS, nút BOOT 5 s quay lại provisioning.

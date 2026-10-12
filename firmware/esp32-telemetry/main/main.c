@@ -153,6 +153,18 @@ static void fake_read(float *out_temp_c, float *out_rh_pct)
 #define SENSOR_TASK_STACK_SIZE 4096
 #define SENSOR_TASK_PRIORITY   5
 
+/* Heartbeat: how often the sensor task re-asserts the retained
+ * `status = online`. A stale LWT from a session that already died can be
+ * published by the broker AFTER the next session's CONNECTED `online`
+ * (the broker only detects a dead socket when its keepalive expires),
+ * leaving the retained record stuck on `offline` for as long as the live
+ * session lasts. Re-asserting converges it back without a reboot; the
+ * interval is a trade-off between how long the app can show a stale
+ * `offline` and how much retained-publish traffic the broker carries.
+ * Independent of CONFIG_SENSOR_PERIOD_MS — the counter below accumulates
+ * the configured period, so any period works. */
+#define MQTT_HEARTBEAT_PERIOD_MS 60000
+
 /* Config received over BLE (on_provision) — read by main only after the
  * event bit is set; exactly one config is in flight at any time because
  * the ble_prov component ignores PROVISION while an attempt is running. */
@@ -186,6 +198,10 @@ static void sensor_task(void *arg)
     float temp_c;
     float rh_pct;
     esp_err_t err;
+    /* Accumulated publish period since the last status heartbeat (see
+     * MQTT_HEARTBEAT_PERIOD_MS). Driven by the same tick as telemetry so the
+     * two never contend for a second timer. */
+    uint32_t since_heartbeat_ms = 0;
 
     for (;;) {
 #if CONFIG_SENSOR_FAKE_MODE
@@ -212,6 +228,20 @@ static void sensor_task(void *arg)
                 ESP_LOGI(TAG, "telemetry sent: T=%.2f C, RH=%.2f %%", temp_c, rh_pct);
             }
         }
+
+        /* Re-assert the retained "online" independently of the sensor read:
+         * a board whose SHT3x is failing is still up, and a stale LWT must
+         * not leave the app showing "offline" for it. */
+        since_heartbeat_ms += CONFIG_SENSOR_PERIOD_MS;
+        if (since_heartbeat_ms >= MQTT_HEARTBEAT_PERIOD_MS) {
+            since_heartbeat_ms = 0;
+            const esp_err_t hb = mqtt_app_publish_heartbeat();
+            if (hb != ESP_OK) {
+                ESP_LOGW(TAG, "status heartbeat dropped: %s",
+                         esp_err_to_name(hb));
+            }
+        }
+
         vTaskDelayUntil(&last_wake, period);
     }
 }

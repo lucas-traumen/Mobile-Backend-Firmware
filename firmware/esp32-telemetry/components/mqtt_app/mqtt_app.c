@@ -630,3 +630,31 @@ esp_err_t mqtt_app_publish_telemetry(float temp_c, float rh_pct)
     }
     return err;
 }
+
+esp_err_t mqtt_app_publish_heartbeat(void)
+{
+    if (!s_initialized || s_client == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!s_connected) {
+        /* The CONNECTED handler publishes the fresh "online" as soon as the
+         * client is back; a queued re-assert would only add outbox churn. */
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Re-assert the retained "online" (same QoS/retain as the CONNECTED
+     * publish — this is a re-assert of an unchanged state, not a transition).
+     *
+     * The broker only notices a dead socket when its keepalive expires, so
+     * the LWT "offline" of a session that already died can be published AFTER
+     * the next session's CONNECTED "online". That ordering leaves the retained
+     * status pinned to "offline" for the whole life of a session that is
+     * demonstrably up (telemetry flowing, relays responding), and the app
+     * faithfully shows what the broker holds. Re-publishing periodically heals
+     * it within one interval without a reboot.
+     *
+     * Deliberately does NOT touch the descriptor or the relay states: those
+     * read relay_get_all(), and relay handling is confined to the MQTT event
+     * task (see the header). A pure string publish is safe from any task. */
+    return publish_text(s_status_topic, ONLINE_PAYLOAD, 1, true);
+}

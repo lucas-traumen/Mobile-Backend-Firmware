@@ -4,6 +4,8 @@
 
 ## Run hiện tại
 
+- **2026-09-30: M29 (QR bỏ field IP — mã chung) — user duyệt "ok triển khai vậy đi"** — run `12d86008-b526-4797-9c0f-855dcf826633`, dispatch `M29:coder` cùng ngày. Kèm brief handoff M29b cho Mobile_Frontend (discovery prefill influxUrl/org/bucket + QR keep-current). Ngữ cảnh: user kẹt bước quét QR vì Influx URL trống (M27a nhét IP vào QR là hướng sai — IP là biến; M27b chưa từng làm nên field IP vô dụng). Wi-Fi HCMUTE đang isolate — demo cần hotspot.
+- **2026-09-30: M28 (amqtt debug toolkit) DONE** — run `5c4b4d94`, 4 vòng coder + review (xem mục M28). 6 file chưa commit — chờ user.
 - **2026-09-28: ĐÃ COMMIT toàn bộ worktree dồn 3 đợt** theo yêu cầu user — `936f049` chore (model reviewer/tester), `533f183` M25 (smarthome-deploy.sh), `e98fc1d` M26 (README user guide + developer-guide.md), `4eb9ba3` M27a (QR non-secret fields + PLAN.md). Các dòng log "Chưa commit — chờ user" phía dưới là trạng thái LỊCH SỬ tại thời điểm ghi, đã hết hiệu lực. Branch ahead origin/main 5 commit (kể cả M24 `4285dbe`) — chưa push theo yêu cầu.
 - `run_id`: `1677db7c-acaf-49c9-820e-fb7fc4659151` — workflow M15 (MQTT host normalization: doc + handoff frontend), tạo khi dispatch `M15b:coder` 2026-09-17. Phase: done (phần việc repo này).
 - Run cũ `038c62c7-4698-4ee9-ae58-9c1296386ef1` (workflow M14) vẫn còn M14c treo chờ user flash firmware v2 — xem mục M14.
@@ -61,7 +63,7 @@ Luồng đã chốt 2026-09-25 — chi tiết bền vững ở `PROJECT_MEMORY.m
 - Components tách theo trách nhiệm:
   - `components/sht3x` — I2C master bus + device (địa chỉ 0x44/0x45 từ Kconfig); đọc single-shot high-repeatability (cmd 0x2400, no clock stretching), đọc 6 byte, kiểm tra **CRC-8 (poly 0x31, init 0xFF)** cho temperature và humidity; convert `T = -45 + 175·raw/65535`, `RH = 100·raw/65535`; validate khoảng vật lý (−40…125 °C, 0…100 %RH) và finite; lỗi CRC/timeout/nack → trả error code, **không bao giờ trả NaN**.
   - `components/wifi_conn` — Station mode, event-driven (`esp_event`), retry với backoff (giới hạn số lần rồi chờ sự kiện hệ thống), không chờ vô hạn.
-  - `components/mqtt_app` — esp-mqtt client: LWT `smarthome/{deviceId}/status` = `offline` (retain); khi `MQTT_EVENT_CONNECTED` publish `online` retained; telemetry `smarthome/{deviceId}/telemetry` QoS 1 retain=false, chỉ publish khi đã connected; cấu hình `outbox.limit` để chặn RAM tăng vô hạn khi mất kết nối; publish fail/outbox đầy → drop + log.
+  - `components/mqtt_app` — esp-mqtt client: LWT `smarthome/{deviceId}/status` = `offline` (retain); khi `MQTT_EVENT_CONNECTED` publish `online` retained; **`mqtt_app_publish_heartbeat()` re-assert `online` retained định kỳ** (gọi từ task sensor, `MQTT_HEARTBEAT_PERIOD_MS` = 60 s ở `main.c`) vì broker chỉ phát hiện socket chết khi keepalive hết hạn → LWT `offline` của session cũ có thể được publish SAU `online` của session mới, ghim retained về `offline` suốt session đang sống (đã gặp thực tế: telemetry đổi giá trị + relay bật/tắt OK nhưng app hiện offline); telemetry `smarthome/{deviceId}/telemetry` QoS 1 retain=false, chỉ publish khi đã connected; cấu hình `outbox.limit` để chặn RAM tăng vô hạn khi mất kết nối; publish fail/outbox đầy → drop + log.
   - `main/` — `Kconfig.projbuild` (I2C SDA/SCL GPIO, địa chỉ SHT3x, Wi-Fi SSID/pass ẩn, broker URI, MQTT user/pass ẩn, deviceId, roomId, chu kỳ đo mặc định 5000 ms), `main.c` composition + task đọc sensor bằng `vTaskDelayUntil()`.
 - Payload JSON đúng schema `schemaVersion/deviceId/roomId/temperature/humidity`; timestamp lấy thời điểm backend nhận bản tin.
 
@@ -847,6 +849,114 @@ Lưu ý giới hạn: `influxUrl`/`mqttHost` trong QR là IP LAN của server �
 - `run_id`: `9dda7b23-ea22-4c5c-9580-03c503633bef`. Dispatch `M27a:coder` 2026-09-28 (files: `scripts/credentials-qr.sh`, `scripts/smarthome-deploy.sh`, README.md additive — không đụng `.env`, không đụng M25/M26 artifact khác).
 - **M27a:coder DONE — orchestrator verified 2026-09-28** (2 vòng cùng session `ses_f19ccb65dffeaxOeXUBGC0ur4l`; reviewer session `ses_f19c7b22cffe6VQs370nAxhaZ7`). Vòng 1: 6 field non-secret `mqttHost/mqttPort(number 9001)/mqttPrefix/influxUrl/influxOrg/influxBucket` vào payload QR cả 2 nơi sinh (script repo + `cmd_credentials_qr` deploy), chỉ xuất hiện khi giá trị không rỗng, secret vẫn qua env-var → python heredoc, `detect_lan_ip` copy nguyên bản; README +1 câu. Review **APPROVE-with-nits** (0 blocker). Vòng 2 vá 2 nit: guard `qrencode` fail (mirror `qr_print`, script vẫn exit 0) + README chèn mệnh đề "khi server nhận ra địa chỉ LAN của mình". Orchestrator tự chạy lại toàn bộ: `bash -n` 2 script exit 0; test guard bằng qrencode giả fail → exit_code=0 + cảnh báo stderr đúng + JSON đủ 11 key; chạy thật QR block 39 dòng; README đúng 1 chỗ dòng 114; `git status` chỉ đúng 3 file dự kiến. Tester skip — thay đổi thuần bash/doc, orchestrator đã tự chạy toàn bộ lệnh kiểm tra (tiền lệ M15b). Nit cosmetic còn lại (không chặn): dòng 114 README có 4 dấu cách giữa 2 câu — mid-line space markdown render thành 1 dấu cách, vô hại thị giác. **Còn: M27b (app Mobile_Frontend nhận field mới — chưa có thì field trong QR inert) + on-target user test.**
 
+
+### M29 (DONE 2026-09-30) — QR credentials bỏ field IP (trở lại mã chung)
+
+Bối cảnh: user phát hiện luồng onboarding bị chặn ở bước quét QR — trường Influx URL trống phải gõ tay. Phân tích orchestrator: M27a nhét IP vào QR (cho emulator) nhưng IP là biến (máy đã đổi 192.168.2.28 → 192.168.100.3 → 196.169.4.166 trong 3 tuần) → QR chết theo IP; đồng thời field non-secret trong QR đang VÔ DỤNG vì M27b (frontend) chưa bao giờ được làm — app strip field lạ. Chốt hướng: **QR = mã chung ổn định vĩnh viễn (secrets + org/bucket/prefix/port cố định); địa chỉ = mDNS discovery tự dò (đã chạy 2 phía, TXT đủ influx_port/org/bucket); gõ tay = fallback dev/emulator**. URL không bao giờ xuất hiện trước người dùng.
+
+Thiết kế:
+1. `scripts/credentials-qr.sh`: bỏ `mqttHost` + `influxUrl` khỏi JSON QR (bỏ cả detect_lan_ip + 2 env MQTT_HOST/INFLUX_URL_IP truyền vào python). Giữ: mqttUsername/mqttPassword/influxToken + `mqttPort` (9001 — số cố định, không phụ thuộc IP), `mqttPrefix`, `influxOrg`, `influxBucket` (đều ổn định). Giữ nguyên guard qrencode-fail M27a. Update comment đầu file (payload dạng đầy đủ mới).
+2. `scripts/smarthome-deploy.sh`: đồng bộ phần `cmd_credentials_qr` (bản nhúng mirror script repo) — bỏ 2 field IP tương tự.
+3. `docs/developer-guide.md`: sửa mô tả QR payload (bỏ mqttHost/influxUrl khỏi danh sách field, ghi rõ URL do mDNS dò tìm / nhập tay fallback — emulator).
+4. `README.md`: nếu có mô tả QR tự điền địa chỉ → sửa thành QR chỉ chứa thông tin đăng nhập, địa chỉ app tự dò (nút Tìm máy chủ trong mạng).
+
+Ngoài scope: mDNS (đã chạy, không đụng); frontend M29b (brief handoff cho Mobile_Frontend — discovery prefill influxUrl/org/bucket + QR keep-current, giao khi user sẵn sàng); hôm nay Wi-Fi HCMUTE bị isolation (log 20m không thấy gói nào từ điện thoại, chỉ connection test của chính orchestrator) — không phải việc repo này.
+
+| task_key | Việc | File chính | Tiêu chí đạt | Lệnh kiểm tra |
+|---|---|---|---|---|
+| M29:coder | 4 việc trên | `scripts/credentials-qr.sh`, `scripts/smarthome-deploy.sh`, `docs/developer-guide.md`, `README.md` | JSON QR không còn `mqttHost`/`influxUrl`; vẫn đủ mqttUsername/mqttPassword/influxToken/mqttPort/mqttPrefix/influxOrg/influxBucket; `bash -n` sạch; deploy sync; docs khớp; footprint đúng 4 file | `bash -n` 2 script + chạy credentials-qr.sh + grep field JSON + diff phần nhúng deploy |
+
+Ràng buộc: KHÔNG đụng `.env`; KHÔNG restart container; không in secret mới ngoài output QR (chức năng vốn có).
+
+- `run_id`: `12d86008-b526-4797-9c0f-855dcf826633`. Dispatch `M29:coder` 2026-09-30. Reviewer/tester không cần mặc định (tiền lệ M15b/M27a — thay đổi thuần script/doc + orchestrator tự chạy toàn bộ lệnh kiểm tra).
+- **M29:coder DONE — orchestrator verified 2026-09-30** (session `ses_f0f3db1a1ffelaNPAPVFFIy2sU`): verify độc lập toàn bộ — `bash -n` 2 script exit 0; chạy `credentials-qr.sh` JSON đúng 9 key (mqttUsername/mqttPassword/influxToken/mqttPort/mqttPrefix/influxOrg/influxBucket + schemaVersion/kind), KHÔNG còn mqttHost/influxUrl, QR vẫn render; `grep detect_lan_ip|MQTT_HOST|INFLUX_URL_IP` trong credentials-qr.sh = 0; `cmd_credentials_qr` trong deploy script sạch field IP (detect_lan_ip giữ cho hàm khác — board-qr/pairing-code, đúng giới hạn); README dòng 114 sửa câu "kèm sẵn địa chỉ" thành mô tả M29 đúng (mã chỉ mang đăng nhập + hằng cấu hình, địa chỉ app dò mDNS/nhập tay emulator); dev-guide +1 bullet giải thích chủ đích M29. Footprint đúng 4 file. **M29 ĐÓNG.** Còn: M29b (frontend — brief trên) + on-target test user (cần hotspot vì HCMUTE isolate).
+
+Brief handoff M29b (repo Mobile_Frontend — dán session orchestrator repo đó khi user sẵn sàng):
+
+```
+Việc (M29b): Luồng onboarding không cần gõ URL — 3 mảnh:
+(1) mDNS discovery prefill thêm: influxUrl (ghép "http://" + IP resolved +
+    TXT influx_port), influxOrg (TXT influx_org), influxBucket (TXT
+    influx_bucket), mqttPrefix (TXT prefix) — dữ liệu đã có từ resolve,
+    hiện app chỉ lấy mqtt host/port.
+(2) QR credentials applier semantics keep-current: QR chỉ đè field secret
+    (mqttUsername/mqttPassword/influxToken + org/bucket/prefix khi trống);
+    KHÔNG đè/xóa field địa chỉ đã có giá trị (mqtt host/port, influxUrl).
+    QR (M29) không còn field IP — không đụng gì đến host.
+(3) BUG THẬT đã bắt trên on-target 2026-09-30 (ảnh app): discovery chọn
+    địa chỉ IPv6 LINK-LOCAL fe80::3a3b:... điền vào influxUrl → app không
+    bao giờ nối được (fe80 cần scope, Android HTTP client không nối được
+    bare). Brief M17 từ 19/9 đã yêu cầu lọc: loopback 127/8, link-local
+    169.254/16 VÀ fe80::/10 (IPv6 link-local), docker 172.16/12, tailscale
+    100.64/10 — app lược thiếu fe80::/10. Server avahi quảng bá 12+ địa
+    chỉ (6× fe80 trên các interface, 4× 172.x docker, 127.0.0.1, và 1 IPv4
+    thật). Fix: lọc ĐỦ theo danh sách trên + ƯU TIÊN IPv4 cùng subnet với
+    thiết bị; chỉ khi không còn IPv4 mới cân nhắc IPv6 global (không
+    link-local). Test: mock resolve trả hỗn hợp fe80/172.x/127.0.0.1/IPv4
+    → phải chọn IPv4.
+
+File: app-mobile/src/modules/settings/ (discovery + secrets-qr applier + test)
+
+Verify: cd app-mobile && npm run typecheck && npm test
+Test thêm: resolve mDNS mock đủ TXT → prefill đủ influxUrl/org/bucket;
+quét QR sau discovery → trường địa chỉ giữ nguyên, secret đè đúng;
+mock địa chỉ fe80 → bị lọc, chọn IPv4.
+```
+
+### M28 (DONE 2026-09-30) — amqtt debug toolkit
+
+Bối cảnh: user hỏi flow nội bộ amqtt + quan tâm "khả năng mở rộng và tổ chức debug dễ". Orchestrator đã đọc source 0.12.1 trong image và xác minh trên stack đang chạy. Kiến trúc mở rộng đã trả lời user: single-process asyncio đủ cho quy mô hiện tại, trần thật là retained-churn (firmware publish retained 5 s/lần → sqlite write mỗi chu kỳ) — tối ưu firmware publish-on-change là việc sau này nếu cần; M28 không đụng. M28 = bộ tool debug 3 lớp.
+
+**Đính chính quan trọng (khảo sát log thật 2026-09-30, stack mobile_backend up 8h):** nhận định "healthcheck spam ERROR log" của orchestrator ở phiên bản phân tích trước là **SAI**. Log thực tế chỉ có 3 dòng INFO mỗi 10s (`connections acquired` ×2 + `Connection from 127.0.0.1`), auth-fail nằm ở DEBUG (không hiện). Healthcheck hiện tại giữ nguyên — không sửa.
+
+Fact đã verify trong source image (để coder không phải làm lại):
+- `amqtt.plugins.logging_amqtt.PacketLoggerPlugin` có sẵn trong image — log mọi packet MQTT ở DEBUG (`client_id <-in-- packet` / `-out->`), guard `isEnabledFor(logging.DEBUG)` → vô hại khi broker chạy INFO, bật vĩnh viễn được.
+- CLI `amqtt` có cờ `-d` (basicConfig DEBUG).
+- CLI `amqtt_sub` hỗ trợ `--url`, `-t` (lặp), `-n`, `--qos`, `-i`, `--clean-session` (default **False** — phải truyền cờ để không lưu session rác vào sqlite).
+- SessionDBPlugin sqlite `/app/data/amqtt.db`, bảng `storedmessage` (topic/data/qos) + `storedsession` (client_id/subscriptions/retained).
+
+Thiết kế:
+1. `amqtt/broker.yaml`: thêm `PacketLoggerPlugin` (empty config) — wire-trace có sẵn chỉ cần `-d`.
+2. `docker-compose.yml`: command thành `exec amqtt ${AMQTT_DEBUG:+-d} -c ...` — `${VAR:+replacement}` là compose interpolation (set non-empty → chèn `-d`); bật debug = thêm `AMQTT_DEBUG=1` vào `.env` + `docker compose up -d amqtt`. KHÔNG thêm vào `environment:` (compose expand trực tiếp lúc render).
+3. `scripts/smarthome-deploy.sh`: đồng bộ embedded broker.yaml (heredoc DEPLOY_BROKER_EOF) + embedded compose command — bundle M25 phải khớp repo (parity nguyên tắc "nhúng NGUYÊN VĂN").
+4. `scripts/mqtt-debug.sh` (mới) — một cửa debug: `tap [filter]` (amqtt_sub trong container, creds từ `.env`, `--clean-session`, URL-encode password, `-n` đếm rồi thoát), `events [pattern]` (compose logs -f + grep), `retained` (sqlite readonly: liệt kê storedmessage + storedsession). Read-only, không in password.
+5. `docs/developer-guide.md`: mục "Công cụ debug amqtt" — 3 lớp quan sát + bảng triệu chứng → lệnh + cảnh báo AMQTT_DEBUG=1 log rất nhiều.
+6. `README.md`: mục NGẮN mô tả `mqtt-debug.sh` (phong cách user guide M26) + link developer-guide — đúng yêu cầu user "readme mô tả nó".
+
+Ngoài scope: healthcheck (giữ nguyên — đính chính trên); tối ưu retained-churn firmware; MQTT 5; ACL.
+
+| task_key | Việc | File chính | Tiêu chí đạt | Lệnh kiểm tra |
+|---|---|---|---|---|
+| M28:coder | 6 việc trên (broker.yaml + compose + deploy sync + mqtt-debug.sh + 2 docs) | `amqtt/broker.yaml`, `docker-compose.yml`, `scripts/smarthome-deploy.sh`, `scripts/mqtt-debug.sh` (mới), `docs/developer-guide.md`, `README.md` | `bash -n` sạch; `docker compose config --quiet` OK; `AMQTT_DEBUG=1 docker compose config` hiện `-d`, không set thì không có; embedded broker.yaml diff-identical repo; live: `retained` liệt kê được topics thật, `tap -n 1` đọc được message test (publish tạm topic `m28-debug-test` không retained); README/developer-guide mô tả đủ; footprint git đúng 6 file | xem danh sách lệnh trong prompt dispatch |
+
+Ràng buộc: KHÔNG restart/stop/up/down container (stack đang chạy thật 8h — chỉ `docker compose exec` read-only + tap tạm); KHÔNG đụng `.env`; KHÔNG đổi healthcheck.
+
+Sau M28:coder → orchestrator tự chạy lại toàn bộ lệnh kiểm tra (kể cả live trên stack đang chạy, KHÔNG restart — AMQTT_DEBUG verify qua compose render + guard logic đã đọc source) → M28:review (đọc diff — đụng compose + deploy script đang vận hành) → chốt M28.
+
+- `run_id`: `5c4b4d94-a2c8-4cb2-bdb5-dab5e9b6a517`. Dispatch `M28:coder` 2026-09-30.
+- **M28 vòng 1 xong — orchestrator verified 2026-09-30** (session coder `ses_f10328231ffeek2t5YcffoLJDE`): tĩnh PASS toàn bộ (`bash -n`, compose render có/không `-d` đúng, embedded broker.yaml IDENTICAL, footprint đúng 6 file). **Xác nhận live 2 claim của coder**: (1) broker amqtt 0.12.1 giao retained KHÔNG khớp filter cho client mới — sub topic hoàn toàn mới `m28-verify-fresh-7q` vẫn nhận descriptor + offline + ON; gốc rễ trong `_handle_client_session`: mỗi client connect, broker replay retained theo filter của TẤT CẢ subscription đang tồn tại (kể cả session restore từ sqlite, có sẵn filter `smarthome/#`) cho client mới, trước cả khi client subscribe gì; (2) tên bảng sqlite thật `stored_messages`/`stored_sessions` (spec orchestrator đưa sai, coder đã PRAGMA-verify đúng). **Còn thiếu → vòng 2**: `tap` đang in payload KHÔNG kèm topic (không phân biệt junk/tín hiệu) + không lọc client-side + password đi qua argv của compose exec trên host (lộ process list khi tap chạy). Ghi chú ngoài scope M28: `.opencode/agents/tester.md` bị modified ngoài luồng (model `xkiro/x-ai/grok-4.7` → `xkiro/z-ai/glm-5.3`, không phải coder/orchestrator sửa — cần user xác nhận).
+- **M28 vòng 3 xong — orchestrator verified độc lập 2026-09-30**: fix 1 dòng env-prefix + bare `-e` (password ra khỏi argv). Verify độc lập: `bash -n` OK; tap ĐANG chạy + `ps` → **NO_LEAK**; tap in đúng `m28-orch-r3  orchestrator-r3-ok` exit 0 không junk; retained 7 topic sống. **Pháp y restart stack 03:30:30–03:31:13Z**: dockerd restart 10:31:12 local (systemctl ActiveEnterTimestamp khớp) → 3 container chết theo daemon rồi sống lại qua `restart: unless-stopped` — nguồn NGOÀI M28 (lệnh phiên chỉ exec read-only/render; CMD container vẫn bản cũ không `${AMQTT_DEBUG:+-d}` → stop/start chứ không recreate). Hệ quả tốt: broker.yaml mới (PacketLoggerPlugin) được nạp live, khởi động sạch ("Retained messages restored: 7", 2 listener bind, healthy). Lưu ý vận hành: container đang chạy CMD cũ — toggle AMQTT_DEBUG hiệu lực từ lần `docker compose up -d` (recreate) kế tiếp.
+- **M28:review REQUEST_CHANGES 2026-09-30** (session reviewer `ses_f0f85d8dcffelMeQrzMix7ROxY`): 1 BLOCKER + 3 SHOULD-FIX + 4 NIT. **BLOCKER** (orchestrator xác minh lại bằng source image — `ConnectPayload.__repr__` in `password={...}` thô, `connect.py:174`): developer-guide:527 viết cảnh báo SAI CHIỀU — "mật khẩu không in thô" trong khi bật `AMQTT_DEBUG=1` ghi mật khẩu MQTT **plaintext** vào log container (CONNECT packet mọi client đi qua PacketLoggerPlugin; log json-file tồn tại trên đĩa) — phải viết lại cảnh báo đúng + khuyến nghị dọn log container sau phiên debug. **SHOULD-FIX**: (1) README:174 trỏ `scripts/mqtt-debug.sh` nhưng quick-start README là deploy single-file không ship script đó — thêm câu định vị (công cụ nằm bản source đầy đủ; server deploy xem log bằng `bash smarthome-deploy.sh logs -f`); (2) developer-guide:523 ví dụ `events 'auth\|error\|Connect'` sai regex ERE (`\|` = pipe literal) — bỏ 3 dấu `\`; (3) mqtt-debug.sh:46-47 `.env` tồn tại nhưng thiếu dòng MQTT_USER/PASSWORD → grep exit 1 + pipefail chết im lặng, nhánh lỗi tiếng Việt unreachable — thêm `|| true`. **NIT lấy**: validate `-n` phải số nguyên dương; ghi default filter `smarthome/#` của tap vào dev-guide. **NIT bỏ** (chấp nhận như review nói vô hại/cosmetic): URL-encode username; liệt kê script trong mục cấu trúc thư mục dev-guide. Tiêu chí A/B/D PASS (cơ chế env-prefix verify cả source compose lẫn live; nhúng broker.yaml 46/46 dòng identical; healthcheck nguyên vẹn). Orchestrator rà `.env`: KHÔNG có biến AMQTT_DEBUG sót — an toàn cho lần up -d kế tiếp. **→ Dispatch M28:coder vòng 4** (fix BLOCKER + 3 SHOULD-FIX + 2 NIT, 3 file, không đụng logic).
+- **M28 vòng 4 xong — M28 ĐÓNG (DONE) 2026-09-30**: coder fix đủ F1–F6; orchestrator verify độc lập TOÀN BỘ PASS — `bash -n` OK; `tap -n` thiếu giá trị / `-n abc` → lỗi tiếng Việt exit 1 (hết unbound variable/ValueError); test cô lập F4 (repo giả `/tmp`, `.env` thiếu key) → đúng thông báo tiếng Việt + exit 1, không chết im lặng; regression tap descriptor in đúng 1 dòng exit 0; cảnh báo F1 viết lại đúng sự thật đã verify (mật khẩu thô + tồn tại đĩa + khuyến nghị dọn log); README câu định vị đúng phong cách M26; regex ERE đúng; footprint 6 file. Tổng kết M28: 4 vòng coder cùng session `ses_f10328231ffeek2t5YcffoLJDE` (implement → tap rewrite → argv-leak fix → review fixes) + 1 review (APPROVE sau fix). Thay đổi chưa commit — chờ user (footprint: `README.md`, `docs/developer-guide.md`, `amqtt/broker.yaml`, `docker-compose.yml`, `scripts/smarthome-deploy.sh` modified + `scripts/mqtt-debug.sh` mới; ngoài ra `.opencode/agents/tester.md` + `PLAN.md` modified ngoài scope M28). Ghi nhớ vận hành: (1) container đang chạy CMD cũ — AMQTT_DEBUG toggle + PacketLogger (đã nạp) hiệu lực đầy đủ từ lần `docker compose up -d` recreate kế tiếp; (2) bật AMQTT_DEBUG=1 là ghi mật khẩu MQTT thô vào log container — chỉ bật khi debug, tắt ngay; (3) stack restart 03:31Z hôm nay do dockerd restart (ngoài M28).
+
+### M30 (CHỜ DUYỆT 2026-10-01) — User báo "quét mDNS xong, URL là địa chỉ mDNS :8086, nghi server lỗi"
+
+Triệu chứng user báo: sau khi quét mDNS, trường URL hiện địa chỉ dạng mDNS kèm `:8086`, nghi phía server.
+
+Orchestrator verify phía server 2026-10-01 (chưa đụng code, chỉ đọc + lệnh read-only):
+- `docker compose ps`: amqtt Up healthy, influxdb Up healthy, backend Up (up 2h sau dockerd restart hôm qua).
+- `curl http://localhost:8086/ping` → HTTP 204 (InfluxDB nghe 0.0.0.0:8086 bình thường).
+- `avahi-browse -rt _smarthome._tcp`: thấy `Smart Home Server`, hostname `lucas-Dell-G15-5525.local`, port 9001, TXT đủ `influx_port=8086/influx_org=smarthome/influx_bucket=telemetry/prefix=smarthome`, địa chỉ Wi-Fi thật `192.168.100.3` kèm các IP docker/loopback/link-local (đúng cảnh báo đa IP đã biết).
+- Đối chiếu contract frontend (`mdnsDiscoveryContract.ts:applyDiscoveredService` + `mdnsDiscoveryService.ts:pickHost`): app ghép influx URL = `http://<IP>:<influx_port>`, trong đó IP là IPv4 đã lọc (loại 127/8, 169.254/16, 172.16/12 docker, 100.64/10 tailscale, fe80::/10, ::1) và ưu tiên cùng subnet điện thoại — KHÔNG dùng hostname `.local` (code ghi rõ `.local` không resolve được bằng RN socket, không có fallback hostname). Nghĩa là với code hiện tại, app KHÔNG thể điền `*.local:8086` — nếu màn hình hiện đúng chuỗi `.local:8086` thì hoặc app đang chạy bản build cũ trước M29b/filter fix, hoặc chuỗi user thấy là tên service/hostname ở dòng hiển thị khác chứ không phải giá trị influxUrl đã fill.
+
+Kết luận tạm: server quảng bá ĐÚNG, InfluxDB nghe ĐÚNG — chưa thấy bằng chứng lỗi phía server. Hướng nghiêng về phía app build cũ hoặc mạng (HCMUTE isolate đã ghi trong M29; ufw trên server chưa kiểm được vì cần sudo tương tác).
+
+Đề xuất M30 (chờ user duyệt, chưa dispatch coder):
+1. User cho biết chuỗi CHÍNH XÁC app đang hiện ở trường Influx URL (copy text hoặc ảnh chụp) + MQTT host/port app đã điền sau quét + điện thoại và laptop có cùng Wi-Fi/hotspot nào không.
+2. Orchestrator hướng dẫn user tự check 2 điểm mạng (không cần coder): `sudo ufw status` trên server (mở 8086/tcp nếu ufw active) + từ điện thoại mở `http://<IP-LAN>:8086/ping` trên browser (kỳ vọng HTTP 204).
+3. Nếu chuỗi đúng là `*.local:8086` → việc thuộc repo Mobile_Frontend (brief M29b đã có, app build lại sau fix filter), không sửa gì bên repo này. Nếu chuỗi là `http://<IP>:8086` mà vẫn lỗi → xin log lỗi query Influx trên app + kiểm tra token/org/bucket.
+
+Ràng buộc: M30 không đụng code repo này cho tới khi xác định được lỗi thuộc server (avahi/compose/influx).
 
 ## Câu hỏi mở (trả lời khi duyệt — mặc định sẽ theo phương án ghi)
 

@@ -111,7 +111,7 @@ Server khởi động lại (reboot, mất điện) thì hệ thống **tự ch�
    bash smarthome-deploy.sh credentials-qr
    ```
 
-   Mã này chứa **mật khẩu của app** — coi như chìa khóa nhà: chỉ hiện ra lúc ghép nối, không chụp màn hình hay gửi đi đâu.    Mã còn kèm sẵn phần không nhạy cảm (địa chỉ máy chủ, MQTT WebSocket port, org/bucket InfluxDB — khi server nhận ra địa chỉ LAN của mình) để bản app mới tự điền hết sau khi quét; bản app hiện tại chỉ dùng phần mật khẩu, phần còn lại tự bỏ qua.
+   Mã này chứa **mật khẩu của app** — coi như chìa khóa nhà: chỉ hiện ra lúc ghép nối, không chụp màn hình hay gửi đi đâu.    Mã chỉ mang thông tin đăng nhập (kèm token chỉ-đọc nếu đã tạo) và các giá trị cấu hình cố định — **không chứa địa chỉ máy chủ** (địa chỉ IP thay đổi khi đổi mạng/reboot, nên không đưa vào mã). Sau khi quét, app tự tìm server trong mạng qua nút **"Tìm máy chủ trong mạng"**; nếu không tìm thấy (ví dụ chạy trên emulator), nhập địa chỉ server bằng tay.
 
 3. Mở app trên điện thoại → quét mã QR ở bước 2 (hoặc dùng dò tìm tự động — app tự thấy server trong mạng).
 4. Xong. Các board đang hoạt động sẽ hiện dưới dạng thẻ trong app.
@@ -168,6 +168,18 @@ Khi cấu hình, giữ điện thoại **gần board** (Bluetooth chỉ bắt đ
 - `update` chỉ thay phiên bản phần mềm: dữ liệu đo được và mật khẩu **giữ nguyên**.
 - Server reboot/mất điện: hệ thống tự sống lại, kiểm tra bằng `status`.
 - Trước một nâng cấp lớn (đổi đời database…), nên sao lưu dữ liệu trước — nhờ người kỹ thuật làm theo phần [Sao lưu và phục hồi dữ liệu](docs/developer-guide.md#sao-lưu-và-phục-hồi-dữ-liệu).
+
+## Xem bên trong hệ thống khi nghi ngờ
+
+Nếu bạn đã tải **bản mã nguồn đầy đủ** (dành cho người kỹ thuật), có công cụ debug một cửa: `bash scripts/mqtt-debug.sh`, với 3 lệnh dễ nhớ:
+
+- `tap` — xem dữ liệu đang chạy qua hệ thống (thiết bị gửi gì, lệnh gì đi ra).
+- `events` — xem sự kiện của bộ phận trung gian (thiết bị nào nối vào, ngắt ra…).
+- `retained` — xem trạng thái hệ thống đang lưu (giá trị cuối cùng của từng thiết bị).
+
+Ví dụ: `bash scripts/mqtt-debug.sh tap` rồi nhìn màn hình; thoát bằng Ctrl-C. Chi tiết cách dùng và xử lý khi có vấn đề: xem [developer guide](docs/developer-guide.md#công-cụ-debug-amqtt).
+
+Trên server đã triển khai theo phần cài nhanh ở đầu tài liệu (chỉ có file `smarthome-deploy.sh`, không có thư mục mã nguồn), công cụ này không có sẵn — xem nhật ký hệ thống bằng lệnh quen thuộc `bash smarthome-deploy.sh logs -f` (thoát bằng Ctrl-C).
 
 ## Xử lý lỗi thường gặp
 

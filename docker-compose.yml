@@ -36,7 +36,9 @@ services:
       PASSWD_FILE: /app/data/passwd
       PASSWD_HELPER: /usr/local/bin/amqtt-passwd.py
     # Sinh passwd từ env rồi exec broker — `exec` để amqtt trở thành PID 1.
-    command: ["/bin/sh", "-c", "/usr/local/bin/amqtt-setup.sh && exec amqtt -c /app/conf/broker.yaml"]
+    # M28: debug wire-trace — thêm `AMQTT_DEBUG=1` vào .env rồi
+    # `docker compose up -d amqtt` (recreate); nhớ tắt sau vì log rất nhiều.
+    command: ["/bin/sh", "-c", "/usr/local/bin/amqtt-setup.sh && exec amqtt ${AMQTT_DEBUG:+-d} -c /app/conf/broker.yaml"]
     # Signal: amqtt 0.12 chỉ graceful-shutdown (SessionDB flush + đóng sạch
     # session) trên SIGINT — `except KeyboardInterrupt` trong broker CLI.
     # docker stop mặc định gửi SIGTERM mà amqtt không xử lý → SIGKILL sau
